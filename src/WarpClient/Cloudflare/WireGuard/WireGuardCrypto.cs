@@ -82,12 +82,12 @@ internal static class WireGuardCrypto
 
     public static byte[]? Open(ReadOnlySpan<byte> key, ulong counter, ReadOnlySpan<byte> sealedData, ReadOnlySpan<byte> associatedData)
     {
-        using ChaCha20Poly1305 cipher = new(key);
+        using ChaChaPolyCipher cipher = new(key);
 
         return Open(cipher, counter, sealedData, associatedData);
     }
 
-    public static byte[]? Open(ChaCha20Poly1305 cipher, ulong counter, ReadOnlySpan<byte> sealedData, ReadOnlySpan<byte> associatedData)
+    public static byte[]? Open(ChaChaPolyCipher cipher, ulong counter, ReadOnlySpan<byte> sealedData, ReadOnlySpan<byte> associatedData)
     {
         if (sealedData.Length < TagLength)
             return null;
@@ -97,26 +97,17 @@ internal static class WireGuardCrypto
 
         BinaryPrimitives.WriteUInt64LittleEndian(nonce[4..], counter);
 
-        try
-        {
-            cipher.Decrypt(nonce, sealedData[..plaintext.Length], sealedData[plaintext.Length..], plaintext, associatedData);
-
-            return plaintext;
-        }
-        catch (AuthenticationTagMismatchException)
-        {
-            return null;
-        }
+        return cipher.TryDecrypt(nonce, sealedData[..plaintext.Length], sealedData[plaintext.Length..], plaintext, associatedData) ? plaintext : null;
     }
 
     public static byte[] Seal(ReadOnlySpan<byte> key, ulong counter, ReadOnlySpan<byte> plaintext, ReadOnlySpan<byte> associatedData)
     {
-        using ChaCha20Poly1305 cipher = new(key);
+        using ChaChaPolyCipher cipher = new(key);
 
         return Seal(cipher, counter, plaintext, associatedData);
     }
 
-    public static byte[] Seal(ChaCha20Poly1305 cipher, ulong counter, ReadOnlySpan<byte> plaintext, ReadOnlySpan<byte> associatedData)
+    public static byte[] Seal(ChaChaPolyCipher cipher, ulong counter, ReadOnlySpan<byte> plaintext, ReadOnlySpan<byte> associatedData)
     {
         Span<byte> nonce = stackalloc byte[NonceLength];
         byte[] output = new byte[plaintext.Length + TagLength];

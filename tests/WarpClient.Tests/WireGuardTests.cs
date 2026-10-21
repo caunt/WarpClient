@@ -42,6 +42,39 @@ public sealed class WireGuardTests
     }
 
     /// <summary>
+    /// The managed ChaCha20-Poly1305 fallback must produce exactly the platform's ciphertext and accept its packets, so
+    /// peers cannot tell which implementation a device uses; tampered packets must fail in both.
+    /// </summary>
+    [Fact]
+    public void ManagedCipherMatchesPlatformCipher()
+    {
+        byte[] key = WireGuardCrypto.GeneratePrivateKey();
+        byte[] nonce = new byte[12];
+        byte[] plaintext = "WARP over WireGuard"u8.ToArray();
+        byte[] associatedData = [1, 2, 3];
+        byte[] managedCiphertext = new byte[plaintext.Length];
+        byte[] managedTag = new byte[16];
+        byte[] decrypted = new byte[plaintext.Length];
+
+        using ChaChaPolyCipher managed = new(key, preferPlatform: false);
+
+        using ChaChaPolyCipher platform = new(key);
+
+        managed.Encrypt(nonce, plaintext, managedCiphertext, managedTag, associatedData);
+
+        bool platformAccepts = platform.TryDecrypt(nonce, managedCiphertext, managedTag, decrypted, associatedData);
+
+        managedTag[0] ^= 1;
+
+        bool tamperedAccepted = managed.TryDecrypt(nonce, managedCiphertext, managedTag, decrypted, associatedData);
+
+        Assert.True(managed.IsManaged);
+        Assert.True(platformAccepts);
+        Assert.Equal(plaintext, decrypted);
+        Assert.False(tamperedAccepted);
+    }
+
+    /// <summary>
     /// Counters may arrive out of order within the window, but duplicates and counters older than the window are replays.
     /// </summary>
     [Fact]

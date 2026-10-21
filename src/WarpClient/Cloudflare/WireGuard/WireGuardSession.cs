@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Security.Cryptography;
 
 namespace Warp.Cloudflare.WireGuard;
 
@@ -12,8 +11,8 @@ internal sealed class WireGuardSession(TransportKeys keys, long createdAt) : IDi
     public const byte DataType = 4;
     private const int PaddingMultiple = 16;
 
-    private readonly ChaCha20Poly1305 _sender = new(keys.SendingKey);
-    private readonly ChaCha20Poly1305 _receiver = new(keys.ReceivingKey);
+    private readonly ChaChaPolyCipher _sender = new(keys.SendingKey);
+    private readonly ChaChaPolyCipher _receiver = new(keys.ReceivingKey);
     private readonly ReplayWindow _replayWindow = new();
     private long _sendCounter = -1;
 
