@@ -1,20 +1,25 @@
 ﻿using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
+using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Text;
 
 using Warp;
 
-// Every check below talks only to ITcpConnector / IUdpConnector, so "--direct" swaps WARP for the host's own sockets and
-// "--transport=http2|wireguard|http3" picks how WARP carries them.
+// Every check talks only to ITcpConnector / IUdpConnector, so "--direct" swaps WARP for the host's own sockets and
+// "--transport=http2|wireguard|http3" picks how WARP carries them. Each step prints as it starts and fails on its own
+// timeout, so a stall always shows where it happened.
 const string headerTerminator = "\r\n\r\n";
 const uint stunMagicCookie = 0x2112A442;
+TimeSpan stepTimeout = TimeSpan.FromSeconds(seconds: 30);
 Uri publicAddressUri = new(uriString: "https://ifconfig.me/ip");
 DnsEndPoint stunServer = new(host: "stun.cloudflare.com", port: 3478);
+DnsEndPoint traceServer = new(host: "2606:4700:4700::1111", port: 443);
 bool direct = args.Contains(value: "--direct");
-
 string transportName = args.FirstOrDefault(static argument => argument.StartsWith(value: "--transport=", StringComparison.Ordinal))?[12..] ?? "http2";
 
 WarpTransport transport = transportName switch
@@ -24,83 +29,156 @@ WarpTransport transport = transportName switch
     _ => WarpTransport.MasqueHttp2,
 };
 
+Console.WriteLine($"Path: {(direct ? "direct sockets" : $"WARP over {transport}")}");
+
 WarpClient warpClient = new(new WarpClientOptions { Transport = transport });
 
 await using ConfiguredAsyncDisposable warpClientDisposal = warpClient.ConfigureAwait(continueOnCapturedContext: false);
 
-if (!direct)
-{
-    WarpAccount account = await warpClient.GetAccountAsync().ConfigureAwait(continueOnCapturedContext: false);
-
-    Console.WriteLine($"Account: {account.AccountType}, role {account.Role}, WARP+ {(account.IsWarpPlus ? "on" : "off")}");
-}
-
 ITcpConnector tcpConnector = direct ? new DirectTcpConnector() : warpClient;
 IUdpConnector udpConnector = direct ? new DirectUdpConnector() : warpClient;
+int failures = 0;
+
+if (!direct)
+{
+    failures += await RunAsync(
+        step: "Account",
+        async cancellationToken =>
+        {
+            WarpAccount account = await warpClient.GetAccountAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+            return $"{account.AccountType}, role {account.Role}, WARP+ {(account.IsWarpPlus ? "on" : "off")}";
+        }
+    ).ConfigureAwait(continueOnCapturedContext: false);
+
+    int tunnelFailure = await RunAsync(
+        step: "Tunnel",
+        async cancellationToken =>
+        {
+            await warpClient.OpenAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+            return "open";
+        }
+    ).ConfigureAwait(continueOnCapturedContext: false);
+
+    if (tunnelFailure > 0)
+        return 1;
+}
 
 using SocketsHttpHandler httpHandler = tcpConnector.CreateHttpMessageHandler();
 
 using HttpClient httpClient = new(httpHandler, disposeHandler: false);
 
-string httpClientAddress = await httpClient.GetStringAsync(publicAddressUri).ConfigureAwait(continueOnCapturedContext: false);
-Console.WriteLine($"HTTP: {httpClientAddress}");
+failures += await RunAsync(step: "HTTP", cancellationToken => httpClient.GetStringAsync(publicAddressUri, cancellationToken)).ConfigureAwait(continueOnCapturedContext: false);
 
-DnsEndPoint remoteEndPoint = new(publicAddressUri.Host, publicAddressUri.Port);
+failures += await RunAsync(
+    step: "TCP",
+    async cancellationToken =>
+    {
+        Stream connection = await tcpConnector.ConnectAsync(new DnsEndPoint(publicAddressUri.Host, publicAddressUri.Port), cancellationToken)
+            .ConfigureAwait(continueOnCapturedContext: false);
 
-using Stream connection = await tcpConnector.ConnectAsync(remoteEndPoint, CancellationToken.None).ConfigureAwait(continueOnCapturedContext: false);
+        SslStream sslStream = new(connection);
 
-using SslStream sslStream = new(connection);
+        await using (sslStream.ConfigureAwait(continueOnCapturedContext: false))
+        {
+            await sslStream.AuthenticateAsClientAsync(publicAddressUri.Host).ConfigureAwait(continueOnCapturedContext: false);
 
-await sslStream.AuthenticateAsClientAsync(publicAddressUri.Host).ConfigureAwait(continueOnCapturedContext: false);
+            byte[] request = Encoding.ASCII.GetBytes($"GET {publicAddressUri.PathAndQuery} HTTP/1.0\r\nHost: {publicAddressUri.Host}{headerTerminator}");
 
-byte[] request = Encoding.ASCII.GetBytes($"GET {publicAddressUri.PathAndQuery} HTTP/1.0\r\nHost: {publicAddressUri.Host}{headerTerminator}");
+            await sslStream.WriteAsync(request, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
-await sslStream.WriteAsync(request).ConfigureAwait(continueOnCapturedContext: false);
+            using StreamReader reader = new(sslStream, Encoding.ASCII);
 
-using StreamReader reader = new(sslStream, Encoding.ASCII);
+            string response = await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
-string response = await reader.ReadToEndAsync().ConfigureAwait(continueOnCapturedContext: false);
-string rawHttpAddress = response[(response.IndexOf(headerTerminator, StringComparison.Ordinal) + headerTerminator.Length)..];
-Console.WriteLine($"TCP: {rawHttpAddress}");
+            return response[(response.IndexOf(headerTerminator, StringComparison.Ordinal) + headerTerminator.Length)..];
+        }
+    }
+).ConfigureAwait(continueOnCapturedContext: false);
 
 // A STUN binding request makes the server echo back the address our UDP datagram arrived from.
-using CancellationTokenSource stunTimeout = new(TimeSpan.FromSeconds(seconds: 5));
+failures += await RunAsync(
+    step: "UDP",
+    async cancellationToken =>
+    {
+        IUdpConnection stunConnection = await udpConnector.ConnectAsync(stunServer, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
-IUdpConnection stunConnection = await udpConnector.ConnectAsync(stunServer, stunTimeout.Token).ConfigureAwait(continueOnCapturedContext: false);
+        await using (stunConnection.ConfigureAwait(continueOnCapturedContext: false))
+        {
+            byte[] bindingRequest = new byte[20];
+            byte[] bindingResponse = new byte[512];
 
-await using (stunConnection.ConfigureAwait(continueOnCapturedContext: false))
-{
-    byte[] bindingRequest = new byte[20];
-    byte[] bindingResponse = new byte[512];
+            BinaryPrimitives.WriteUInt16BigEndian(bindingRequest, value: 0x0001);
+            BinaryPrimitives.WriteUInt32BigEndian(bindingRequest.AsSpan(start: 4), stunMagicCookie);
+            RandomNumberGenerator.Fill(bindingRequest.AsSpan(start: 8));
+            await stunConnection.SendAsync(bindingRequest, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
-    BinaryPrimitives.WriteUInt16BigEndian(bindingRequest, value: 0x0001);
-    BinaryPrimitives.WriteUInt32BigEndian(bindingRequest.AsSpan(start: 4), stunMagicCookie);
-    RandomNumberGenerator.Fill(bindingRequest.AsSpan(start: 8));
-    await stunConnection.SendAsync(bindingRequest, stunTimeout.Token).ConfigureAwait(continueOnCapturedContext: false);
+            int responseLength = await stunConnection.ReceiveAsync(bindingResponse, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
-    int responseLength = await stunConnection.ReceiveAsync(bindingResponse, stunTimeout.Token).ConfigureAwait(continueOnCapturedContext: false);
-
-    Console.WriteLine($"UDP: {ReadMappedAddress(bindingResponse.AsSpan(start: 0, responseLength))}");
-}
+            return ReadMappedAddress(bindingResponse.AsSpan(start: 0, responseLength)).ToString();
+        }
+    }
+).ConfigureAwait(continueOnCapturedContext: false);
 
 // Cloudflare's trace page reports the address a request came from and whether it arrived through WARP.
-DnsEndPoint traceEndPoint = new(host: "2606:4700:4700::1111", port: 443);
-Stream traceConnection = await tcpConnector.ConnectAsync(traceEndPoint, CancellationToken.None).ConfigureAwait(continueOnCapturedContext: false);
-SslStream traceStream = new(traceConnection);
+failures += await RunAsync(
+    step: "IPv6",
+    async cancellationToken =>
+    {
+        Stream traceConnection = await tcpConnector.ConnectAsync(traceServer, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        SslStream traceStream = new(traceConnection);
 
-await using (traceStream.ConfigureAwait(continueOnCapturedContext: false))
+        await using (traceStream.ConfigureAwait(continueOnCapturedContext: false))
+        {
+            await traceStream.AuthenticateAsClientAsync(targetHost: "one.one.one.one").ConfigureAwait(continueOnCapturedContext: false);
+            await traceStream.WriteAsync("GET /cdn-cgi/trace HTTP/1.0\r\nHost: one.one.one.one\r\n\r\n"u8.ToArray(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+            using StreamReader traceReader = new(traceStream, Encoding.ASCII);
+
+            string trace = await traceReader.ReadToEndAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+            string[] traceLines = trace.Split(separator: '\n');
+            string traceAddress = traceLines.FirstOrDefault(static line => line.StartsWith(value: "ip=", StringComparison.Ordinal)) ?? "ip=?";
+            string traceWarp = traceLines.FirstOrDefault(static line => line.StartsWith(value: "warp=", StringComparison.Ordinal)) ?? "warp=?";
+
+            return $"{traceAddress[3..]} ({traceWarp})";
+        }
+    }
+).ConfigureAwait(continueOnCapturedContext: false);
+
+return failures == 0 ? 0 : 1;
+
+async Task<int> RunAsync(string step, Func<CancellationToken, Task<string>> check)
 {
-    await traceStream.AuthenticateAsClientAsync(targetHost: "one.one.one.one").ConfigureAwait(continueOnCapturedContext: false);
-    await traceStream.WriteAsync("GET /cdn-cgi/trace HTTP/1.0\r\nHost: one.one.one.one\r\n\r\n"u8.ToArray()).ConfigureAwait(continueOnCapturedContext: false);
+    long started = Stopwatch.GetTimestamp();
 
-    using StreamReader traceReader = new(traceStream, Encoding.ASCII);
+    Console.Write($"{step}: ");
 
-    string trace = await traceReader.ReadToEndAsync().ConfigureAwait(continueOnCapturedContext: false);
-    string[] traceLines = trace.Split(separator: '\n');
-    string traceAddress = traceLines.FirstOrDefault(static line => line.StartsWith(value: "ip=", StringComparison.Ordinal)) ?? "ip=?";
-    string traceWarp = traceLines.FirstOrDefault(static line => line.StartsWith(value: "warp=", StringComparison.Ordinal)) ?? "warp=?";
+    using CancellationTokenSource timeout = new(stepTimeout);
 
-    Console.WriteLine($"IPv6: {traceAddress[3..]} ({traceWarp})");
+    try
+    {
+        string result = await check(timeout.Token).ConfigureAwait(continueOnCapturedContext: false);
+
+        Console.WriteLine(result.Trim());
+
+        return 0;
+    }
+    catch (Exception exception) when (IsReportable(exception))
+    {
+        TimeSpan elapsed = Stopwatch.GetElapsedTime(started);
+
+        Console.WriteLine($"failed after {elapsed.TotalSeconds:0.0}s: {exception.GetType().Name}: {exception.Message}");
+
+        return 1;
+    }
+}
+
+// Failures a step reports and survives; anything else (a bug in the playground itself) still crashes loudly.
+static bool IsReportable(Exception exception)
+{
+    return exception is IOException or TimeoutException or OperationCanceledException or HttpRequestException
+        or NotSupportedException or InvalidDataException or AuthenticationException or SocketException;
 }
 
 static IPAddress ReadMappedAddress(ReadOnlySpan<byte> message)

@@ -75,6 +75,7 @@ WarpClientOptions options = new()
 };
 ```
 
+- `ConnectTimeout` (20 seconds by default) bounds registration requests and opening a transport, so an unreachable endpoint fails with a `TimeoutException` instead of waiting.
 - `RegistrationPath` holds the device's private keys and access token. It defaults to `WarpClient/registration.json` in the user's application data folder and is created readable only by its owner.
 - `Underlay` carries the registration API calls and the HTTP/2 tunnel's TCP connection. It defaults to `SystemProxyTcpConnector`, which connects directly unless the system proxy settings say otherwise.
 - `UdpUnderlay` carries WireGuard datagrams. HTTP/3 uses its own QUIC socket.

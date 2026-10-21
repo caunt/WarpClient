@@ -7,12 +7,6 @@ namespace Warp;
 public sealed class WarpClientOptions
 {
     /// <summary>
-    /// Gets or sets a WARP+ license key you own, as shown in the 1.1.1.1 app. It is bound to the device once and remembered
-    /// in the registration file; the license's account allows a limited number of devices.
-    /// </summary>
-    public string? LicenseKey { get; set; }
-
-    /// <summary>
     /// Gets or sets the file that holds the device registration, including its private key. It is created with owner-only
     /// permissions on first use and reused afterwards, so one WARP device serves every run. Defaults to
     /// <c>WarpClient/registration.json</c> inside the user's application data folder.
@@ -26,11 +20,10 @@ public sealed class WarpClientOptions
     );
 
     /// <summary>
-    /// Gets or sets a Cloudflare Zero Trust enrollment token for your organization: the JWT issued by
-    /// <c>https://&lt;team&gt;.cloudflareaccess.com/warp</c> after signing in, or by a service token. It is only used when a
-    /// new device is registered, and it expires quickly, so register right after obtaining it.
+    /// Gets or sets a WARP+ license key you own, as shown in the 1.1.1.1 app. It is bound to the device once and remembered
+    /// in the registration file; the license's account allows a limited number of devices.
     /// </summary>
-    public string? TeamToken { get; set; }
+    public string? LicenseKey { get; set; }
 
     /// <summary>
     /// Gets or sets the network path used for Cloudflare's registration API and for the tunnel's own TCP connection.
@@ -39,10 +32,23 @@ public sealed class WarpClientOptions
     public ITcpConnector Underlay { get; set; } = new SystemProxyTcpConnector();
 
     /// <summary>
+    /// Gets or sets a Cloudflare Zero Trust enrollment token for your organization: the JWT issued by
+    /// <c>https://&lt;team&gt;.cloudflareaccess.com/warp</c> after signing in, or by a service token. It is only used when a
+    /// new device is registered, and it expires quickly, so register right after obtaining it.
+    /// </summary>
+    public string? TeamToken { get; set; }
+
+    /// <summary>
     /// Gets or sets the protocol that carries traffic to Cloudflare. Defaults to <see cref="WarpTransport.MasqueHttp2"/>,
     /// which works wherever HTTPS does; <see cref="WarpTransport.WireGuard"/> needs outbound UDP.
     /// </summary>
     public WarpTransport Transport { get; set; } = WarpTransport.MasqueHttp2;
+
+    /// <summary>
+    /// Gets or sets how long registration requests and opening a transport may take before failing with a
+    /// <see cref="TimeoutException"/>, so an unreachable endpoint is reported instead of waited on. Defaults to 20 seconds.
+    /// </summary>
+    public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(seconds: 20);
 
     /// <summary>
     /// Gets or sets the network path for the WireGuard transport's UDP datagrams. Defaults to the host's own sockets.

@@ -41,9 +41,9 @@ public sealed class WarpClient(WarpClientOptions? options = null) : ITcpConnecto
 
         try
         {
-            IWarpSession opened = await client.GetSessionAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+            await client.OpenAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
-            return opened.IsClosed ? throw new IOException(message: "The WARP tunnel closed right after opening.") : client;
+            return client;
         }
         catch
         {
@@ -156,6 +156,19 @@ public sealed class WarpClient(WarpClientOptions? options = null) : ITcpConnecto
         AccountResponse account = await DeviceRegistrationStore.GetAccountAsync(_options, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
         return new WarpAccount(account.AccountType ?? "unknown", account.WarpPlus, account.PremiumData, account.Quota, account.Role ?? "unknown");
+    }
+
+    /// <summary>
+    /// Registers the device if needed and opens the transport now, instead of on the first connection.
+    /// </summary>
+    /// <param name="cancellationToken">Aborts registration and transport setup.</param>
+    /// <returns>A task that completes once traffic can flow, or fails with the reason it cannot.</returns>
+    public async ValueTask OpenAsync(CancellationToken cancellationToken = default)
+    {
+        IWarpSession opened = await GetSessionAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+        if (opened.IsClosed)
+            throw new IOException(message: "The WARP transport closed right after opening.");
     }
 
     /// <inheritdoc />

@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 
 using Nito.AsyncEx;
@@ -38,6 +39,7 @@ internal sealed class WireGuardTunnel : IPacketTunnel
     private volatile bool _closed;
     private WireGuardSession? _current;
     private long _handshakeStartedAt;
+    private SocketException? _lastNetworkError;
     private long _lastSentAt;
     private HandshakeState? _pending;
     private long _pendingSentAt;
@@ -120,6 +122,11 @@ internal sealed class WireGuardTunnel : IPacketTunnel
         await SendAsync(message, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     }
 
+    private static bool IsTransient(SocketError error)
+    {
+        return error is SocketError.ConnectionRefused or SocketError.ConnectionReset or SocketError.HostUnreachable or SocketError.NetworkUnreachable;
+    }
+
     // Accepts "host:port", "1.2.3.4:port" and "[ipv6]:port".
     private static DnsEndPoint? ParseEndpoint(string endpoint)
     {
@@ -181,7 +188,14 @@ internal sealed class WireGuardTunnel : IPacketTunnel
             await InitiateAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         }
 
-        await _established.Task.WaitAsync(HandshakeTimeout, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        try
+        {
+            await _established.Task.WaitAsync(HandshakeTimeout, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        }
+        catch (OperationCanceledException exception) when (_lastNetworkError is not null)
+        {
+            throw new IOException($"Cloudflare did not answer the WireGuard handshake; the network reported: {_lastNetworkError.Message}", exception);
+        }
     }
 
     private async ValueTask HandleMessageAsync(byte[] message, CancellationToken cancellationToken)
@@ -232,7 +246,7 @@ internal sealed class WireGuardTunnel : IPacketTunnel
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                int length = await _connection.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+                int length = await ReceiveDatagramAsync(buffer, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
                 if (length < WireGuardSession.DataHeaderLength)
                     continue;
@@ -258,6 +272,22 @@ internal sealed class WireGuardTunnel : IPacketTunnel
         }
 
         await CloseAsync(reason).ConfigureAwait(continueOnCapturedContext: false);
+    }
+
+    // ICMP errors such as "port unreachable" surface on a connected UDP socket's next receive. They are transient for
+    // WireGuard, which keeps retrying the handshake, so they are remembered for diagnostics instead of ending the tunnel.
+    private async ValueTask<int> ReceiveDatagramAsync(byte[] buffer, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _connection.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        }
+        catch (SocketException exception) when (IsTransient(exception.SocketErrorCode))
+        {
+            _lastNetworkError = exception;
+
+            return 0;
+        }
     }
 
     private async Task RunTimerAsync(CancellationToken cancellationToken)

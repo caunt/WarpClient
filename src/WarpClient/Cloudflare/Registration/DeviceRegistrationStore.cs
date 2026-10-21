@@ -14,7 +14,7 @@ internal static class DeviceRegistrationStore
 
         using SocketsHttpHandler handler = options.Underlay.CreateHttpMessageHandler();
 
-        using HttpClient httpClient = new(handler, disposeHandler: false);
+        using HttpClient httpClient = new(handler, disposeHandler: false) { Timeout = options.ConnectTimeout };
 
         return await new DeviceRegistrationClient(httpClient).GetAccountAsync(registration, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     }
@@ -23,7 +23,7 @@ internal static class DeviceRegistrationStore
     {
         using SocketsHttpHandler handler = options.Underlay.CreateHttpMessageHandler();
 
-        using HttpClient httpClient = new(handler, disposeHandler: false);
+        using HttpClient httpClient = new(handler, disposeHandler: false) { Timeout = options.ConnectTimeout };
 
         DeviceRegistrationClient client = new(httpClient);
         bool exists = File.Exists(options.RegistrationPath);
