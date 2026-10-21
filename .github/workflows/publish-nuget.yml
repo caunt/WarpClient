@@ -50,14 +50,6 @@ jobs:
       - name: NuGet Push
         run: dotnet nuget push "artifacts/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --skip-duplicate
 
-      # One-time cleanup: WarpClient.DependencyInjection was merged into WarpClient, so its versions are unlisted.
-      - name: Unlist WarpClient.DependencyInjection
-        continue-on-error: true
-        run: |
-          for version in 26.10.21.7546 26.10.21.7751 26.10.21.7857 26.10.21.7941 26.10.21.7972 26.10.21.8006 26.10.21.8417; do
-            dotnet nuget delete WarpClient.DependencyInjection "$version" --source https://api.nuget.org/v3/index.json --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --non-interactive
-          done
-
       - name: Upload Pack Artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
