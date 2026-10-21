@@ -34,6 +34,9 @@ internal sealed class QuicClientOptions
 
     public required string ServerName { get; init; }
 
+    // Sent in STOP_SENDING when a stream is disposed before the server finished it; HTTP/3 uses H3_REQUEST_CANCELLED.
+    public ulong StreamErrorCode { get; init; }
+
     public long StreamReceiveWindow { get; init; } = 1024 * 1024;
 
     public int StreamSendBufferLength { get; init; } = 256 * 1024;

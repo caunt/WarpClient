@@ -11,7 +11,7 @@ using System.Text;
 using Warp;
 
 // Every check talks only to ITcpConnector / IUdpConnector, so "--direct" swaps WARP for the host's own sockets and
-// "--transport=http2|wireguard|http3" picks how WARP carries them; "--account" also prints the device's Cloudflare account.
+// "--transport=http2|http3|http3-proxy|wireguard" picks how WARP carries them; "--account" also prints the device's Cloudflare account.
 // Each step prints as it starts and fails on its own timeout, so a stall always shows where it happened.
 const string headerTerminator = "\r\n\r\n";
 const uint stunMagicCookie = 0x2112A442;
@@ -27,6 +27,7 @@ WarpTransport transport = transportName switch
 {
     "wireguard" => WarpTransport.WireGuard,
     "http3" => WarpTransport.MasqueHttp3,
+    "http3-proxy" => WarpTransport.MasqueHttp3Proxy,
     _ => WarpTransport.MasqueHttp2,
 };
 

@@ -15,7 +15,7 @@ namespace Warp;
 /// The first use registers a free WARP device unless <see cref="WarpClientOptions.RegistrationPath"/> already holds one,
 /// which accepts Cloudflare's terms of service. By default traffic travels through WARP's MASQUE tunnel over HTTP/2 on TCP
 /// port 443, carrying IPv4 and IPv6 packets, with host names resolved by 1.1.1.1 inside the tunnel;
-/// <see cref="WarpClientOptions.Transport"/> selects WireGuard or HTTP/3 proxy mode instead.
+/// <see cref="WarpClientOptions.Transport"/> selects MASQUE over HTTP/3, its proxy mode, or WireGuard instead.
 /// </remarks>
 /// <remarks>
 /// Prepares a client that opens its tunnel on first use. Prefer <see cref="CreateAsync"/> to surface connection

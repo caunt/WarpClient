@@ -11,6 +11,7 @@ internal static class Http3Framing
     public const ulong DataFrame = 0x0;
     public const ulong HeadersFrame = 0x1;
     public const ulong SettingsFrame = 0x4;
+    private const int MaximumHeadersLength = 16384;
     private const int MaximumIntegerLength = 8;
 
     public static byte[] CreateFrame(ulong type, ReadOnlySpan<byte> payload)
@@ -40,6 +41,30 @@ internal static class Http3Framing
             ?? throw new IOException(message: "The HTTP/3 stream ended inside a frame header.");
 
         return length > int.MaxValue ? throw new InvalidDataException(message: "The HTTP/3 frame is too large.") : new Http3FrameHeader(frameType, (long)length);
+    }
+
+    /// <summary>
+    /// Reads the response HEADERS of a request stream and returns its status, skipping frames that may precede it.
+    /// </summary>
+    public static async ValueTask<int> ReadResponseStatusAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        Http3FrameHeader? frame = await ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+        // Unknown and reserved frame types may precede the response headers and are skipped (RFC 9114 section 9).
+        while (frame is Http3FrameHeader skipped && skipped.Type != HeadersFrame)
+        {
+            await SkipAsync(stream, skipped.Length, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+            frame = await ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        }
+
+        if (frame is not Http3FrameHeader headers || headers.Length > MaximumHeadersLength)
+            throw new IOException(message: "Cloudflare ended the HTTP/3 stream without response headers.");
+
+        byte[] section = new byte[headers.Length];
+
+        await stream.ReadExactlyAsync(section, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+        return QpackFieldSection.DecodeStatus(section);
     }
 
     public static async ValueTask SkipAsync(Stream stream, long length, CancellationToken cancellationToken)

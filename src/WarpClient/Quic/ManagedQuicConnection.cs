@@ -11,7 +11,6 @@ namespace Warp.Quic;
 /// </summary>
 internal sealed class ManagedQuicConnection : IAsyncDisposable
 {
-    private const ulong DefaultStreamErrorCode = 0;
     private const int ReceiveBufferLength = 65536;
     private static readonly TimeSpan SocketErrorBackoff = TimeSpan.FromMilliseconds(milliseconds: 10);
 
@@ -20,6 +19,7 @@ internal sealed class ManagedQuicConnection : IAsyncDisposable
     private readonly AsyncLock _mutex = new();
     private readonly ConcurrentQueue<QuicStreamState> _releases = new();
     private readonly CancellationTokenSource _stopping = new();
+    private readonly ulong _streamErrorCode;
     private readonly AsyncAutoResetEvent _timerChanged = new();
     private readonly IUdpConnection _transport;
     private int _disposed;
@@ -30,6 +30,7 @@ internal sealed class ManagedQuicConnection : IAsyncDisposable
     private ManagedQuicConnection(IUdpConnection transport, QuicClientOptions options)
     {
         _transport = transport;
+        _streamErrorCode = options.StreamErrorCode;
         _core = new QuicConnectionCore(options, Now);
         _changed = new AsyncConditionVariable(_mutex);
     }
@@ -315,7 +316,7 @@ internal sealed class ManagedQuicConnection : IAsyncDisposable
     {
         // Disposing a stream completes its writes and stops reading whatever the server still sends.
         state.CompleteWrites();
-        _core.AbortRead(state, DefaultStreamErrorCode);
+        _core.AbortRead(state, _streamErrorCode);
         _core.Release(state);
     }
 

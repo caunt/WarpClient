@@ -1,5 +1,4 @@
-using System.Net.Quic;
-using System.Runtime.Versioning;
+using Warp.Quic;
 
 namespace Warp.Cloudflare.Http3;
 
@@ -7,10 +6,7 @@ namespace Warp.Cloudflare.Http3;
 /// The byte stream of an established HTTP/3 <c>CONNECT</c>: writes become DATA frames, and reads return DATA payloads while
 /// skipping any other frame the server interleaves.
 /// </summary>
-[SupportedOSPlatform("linux")]
-[SupportedOSPlatform("macos")]
-[SupportedOSPlatform("windows")]
-internal sealed class Http3DataStream(QuicStream stream) : Stream
+internal sealed class Http3DataStream(ManagedQuicStream stream) : Stream
 {
     private bool _ended;
     private long _remaining;
@@ -31,7 +27,7 @@ internal sealed class Http3DataStream(QuicStream stream) : Stream
 
     public override async ValueTask DisposeAsync()
     {
-        stream.CompleteWrites();
+        // Disposing the QUIC stream sends the FIN that ends the tunneled connection.
         await stream.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
         await base.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
     }

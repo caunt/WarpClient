@@ -1,5 +1,6 @@
 using System.Net;
 
+using Warp.Cloudflare.Http3;
 using Warp.Cloudflare.Registration;
 using Warp.Cloudflare.Tunnel;
 using Warp.Cloudflare.WireGuard;
@@ -9,7 +10,7 @@ using Warp.Networking.Dns;
 namespace Warp.Cloudflare;
 
 /// <summary>
-/// One open layer-3 tunnel (MASQUE over HTTP/2 or WireGuard) together with the network stack and resolver inside it.
+/// One open layer-3 tunnel (MASQUE over HTTP/2 or HTTP/3, or WireGuard) together with the network stack and resolver inside it.
 /// </summary>
 internal sealed class TunnelSession : IWarpSession
 {
@@ -28,9 +29,12 @@ internal sealed class TunnelSession : IWarpSession
 
     public static async ValueTask<TunnelSession> OpenAsync(DeviceRegistration registration, WarpClientOptions options, CancellationToken cancellationToken)
     {
-        IPacketTunnel tunnel = options.Transport == WarpTransport.WireGuard
-            ? await WireGuardTunnel.OpenAsync(registration, options.UdpUnderlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false)
-            : await MasqueTunnel.OpenAsync(registration, options.Underlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        IPacketTunnel tunnel = options.Transport switch
+        {
+            WarpTransport.WireGuard => await WireGuardTunnel.OpenAsync(registration, options.UdpUnderlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false),
+            WarpTransport.MasqueHttp3 => await MasqueHttp3Tunnel.OpenAsync(registration, options.UdpUnderlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false),
+            _ => await MasqueTunnel.OpenAsync(registration, options.Underlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false),
+        };
 
         IPAddress? localIpv6 = registration.AddressIpv6 is null ? null : IPAddress.Parse(registration.AddressIpv6);
         UserspaceNetworkStack stack = new(tunnel, IPAddress.Parse(registration.AddressIpv4), localIpv6);

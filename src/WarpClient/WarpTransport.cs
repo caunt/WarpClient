@@ -20,7 +20,14 @@ public enum WarpTransport
 
     /// <summary>
     /// MASQUE proxy mode: each TCP connection is its own HTTP/3 <c>CONNECT</c> stream over QUIC on UDP port 443, and
-    /// Cloudflare resolves host names. Carries TCP only; needs outbound UDP and, on Linux, libmsquic.
+    /// Cloudflare resolves host names. Carries TCP only and needs outbound UDP. Earlier releases named this value
+    /// <c>MasqueHttp3</c>.
     /// </summary>
-    MasqueHttp3 = 2,
+    MasqueHttp3Proxy = 2,
+
+    /// <summary>
+    /// MASQUE IP tunnel over HTTP/3 on UDP port 443, the protocol of Cloudflare's own apps: IP packets travel as QUIC
+    /// datagrams, so TCP, UDP and IPv6 all work. Needs outbound UDP.
+    /// </summary>
+    MasqueHttp3 = 3,
 }

@@ -5,7 +5,7 @@ using Warp.Cloudflare.Http3;
 namespace Warp.Tests;
 
 /// <summary>
-/// Covers the HTTP/3 pieces of MASQUE proxy mode: QPACK field sections for <c>CONNECT</c> and frame headers.
+/// Covers the HTTP/3 pieces of MASQUE: QPACK field sections for <c>CONNECT</c> and extended CONNECT, and frame headers.
 /// </summary>
 public sealed class Http3FramingTests
 {
@@ -30,6 +30,29 @@ public sealed class Http3FramingTests
     {
         byte[] section = QpackFieldSection.CreateConnectRequest(authority: "example.com:443");
         byte[] expected = [0x00, 0x00, 0xCF, 0x50, 0x0F, .. Encoding.ASCII.GetBytes(s: "example.com:443")];
+
+        Assert.Equal(expected, section);
+    }
+
+    /// <summary>
+    /// The IP tunnel's extended CONNECT must carry exactly the fields Cloudflare's client sends, in order, as static-table
+    /// references where possible and plain literals otherwise.
+    /// </summary>
+    [Fact]
+    public void ExtendedConnectRequestMatchesCloudflareClient()
+    {
+        byte[] section = QpackFieldSection.CreateExtendedConnectRequest(protocol: "cf-connect-ip", authority: "cloudflareaccess.com");
+
+        byte[] expected =
+        [
+            0x00, 0x00, 0xCF,
+            0x27, 0x02, .. Encoding.ASCII.GetBytes(s: ":protocol"), 0x0D, .. Encoding.ASCII.GetBytes(s: "cf-connect-ip"),
+            0xD7,
+            0x50, 0x14, .. Encoding.ASCII.GetBytes(s: "cloudflareaccess.com"),
+            0xC1,
+            0xFF, 0x20,
+            0x27, 0x09, .. Encoding.ASCII.GetBytes(s: "capsule-protocol"), 0x02, .. Encoding.ASCII.GetBytes(s: "?1"),
+        ];
 
         Assert.Equal(expected, section);
     }

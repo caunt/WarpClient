@@ -13,7 +13,10 @@ internal static class QpackFieldSection
 {
     private const int AuthorityIndex = 0;
     private const int MethodConnectIndex = 15;
+    private const int PathRootIndex = 1;
+    private const int SchemeHttpsIndex = 23;
     private const int StatusDigits = 3;
+    private const int UserAgentIndex = 95;
 
     public static byte[] CreateConnectRequest(string authority)
     {
@@ -25,6 +28,26 @@ internal static class QpackFieldSection
         AddInteger(section, prefix: 0x50, prefixBits: 4, AuthorityIndex);
         AddInteger(section, prefix: 0x00, prefixBits: 7, value.Length);
         section.AddRange(value);
+
+        return [.. section];
+    }
+
+    /// <summary>
+    /// An extended CONNECT (RFC 9220) with the fields Cloudflare's own client sends to open the IP tunnel, including its
+    /// empty user-agent.
+    /// </summary>
+    public static byte[] CreateExtendedConnectRequest(string protocol, string authority)
+    {
+        List<byte> section = [0x00, 0x00];
+
+        AddInteger(section, prefix: 0xC0, prefixBits: 6, MethodConnectIndex);
+        AddLiteral(section, name: ":protocol", protocol);
+        AddInteger(section, prefix: 0xC0, prefixBits: 6, SchemeHttpsIndex);
+        AddInteger(section, prefix: 0x50, prefixBits: 4, AuthorityIndex);
+        AddString(section, authority);
+        AddInteger(section, prefix: 0xC0, prefixBits: 6, PathRootIndex);
+        AddInteger(section, prefix: 0xC0, prefixBits: 6, UserAgentIndex);
+        AddLiteral(section, name: "capsule-protocol", value: "?1");
 
         return [.. section];
     }
@@ -85,6 +108,24 @@ internal static class QpackFieldSection
         }
 
         section.Add((byte)value);
+    }
+
+    // A literal field line with a literal name, neither Huffman-coded.
+    private static void AddLiteral(List<byte> section, string name, string value)
+    {
+        byte[] nameBytes = Encoding.ASCII.GetBytes(name);
+
+        AddInteger(section, prefix: 0x20, prefixBits: 3, nameBytes.Length);
+        section.AddRange(nameBytes);
+        AddString(section, value);
+    }
+
+    private static void AddString(List<byte> section, string value)
+    {
+        byte[] bytes = Encoding.ASCII.GetBytes(value);
+
+        AddInteger(section, prefix: 0x00, prefixBits: 7, bytes.Length);
+        section.AddRange(bytes);
     }
 
     private static bool IsStatusIndex(int index)
