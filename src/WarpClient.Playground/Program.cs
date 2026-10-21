@@ -156,7 +156,7 @@ async Task<int> RunAsync(string step, Func<CancellationToken, Task<string>> chec
 {
     long started = Stopwatch.GetTimestamp();
 
-    Console.Write($"{step}: ");
+    Console.Write($"{step}... ");
 
     using CancellationTokenSource timeout = new(stepTimeout);
 
@@ -164,7 +164,7 @@ async Task<int> RunAsync(string step, Func<CancellationToken, Task<string>> chec
     {
         string result = await check(timeout.Token).ConfigureAwait(continueOnCapturedContext: false);
 
-        Console.WriteLine(result.Trim());
+        Console.WriteLine($"{result.Trim()} ({Stopwatch.GetElapsedTime(started).TotalSeconds:0.0}s)");
 
         return 0;
     }
