@@ -9,6 +9,7 @@ using Nito.AsyncEx;
 
 using Warp.Cloudflare.Registration;
 using Warp.Networking;
+using Warp.Quic;
 
 namespace Warp.Cloudflare.Tunnel;
 

@@ -1,3 +1,5 @@
+using Warp.Quic;
+
 namespace Warp.Cloudflare.Tunnel;
 
 /// <summary>

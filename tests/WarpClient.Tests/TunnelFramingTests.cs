@@ -1,4 +1,5 @@
 using Warp.Cloudflare.Tunnel;
+using Warp.Quic;
 
 namespace Warp.Tests;
 

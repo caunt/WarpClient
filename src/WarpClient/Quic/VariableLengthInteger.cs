@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace Warp.Cloudflare.Tunnel;
+namespace Warp.Quic;
 
 /// <summary>
 /// QUIC variable-length integers (RFC 9000 section 16), which also frame HTTP capsules.
