@@ -1,0 +1,41 @@
+on:
+  workflow_call:
+    inputs:
+      dotnet-version:
+        type: string
+        required: false
+        default: 'latest'
+      warpclient-version:
+        type: string
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Build
+        run: dotnet build WarpClient.slnx --configuration Release /p:Version=${{ inputs.warpclient-version }}
+
+      # NetAgents rewrites sources while building, so any change here means the commit was not formatted.
+      - name: Check formatting
+        run: git diff --exit-code
+
+      - name: Pack
+        run: |
+          dotnet pack src/WarpClient --configuration Release --no-build --output artifacts /p:Version=${{ inputs.warpclient-version }}
+          dotnet pack src/WarpClient.DependencyInjection --configuration Release --no-build --output artifacts /p:Version=${{ inputs.warpclient-version }}
+
+      - name: Upload Pack Artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: nuget-packages
+          path: artifacts
+          compression-level: 9
+          if-no-files-found: error

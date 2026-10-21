@@ -1,0 +1,39 @@
+on:
+  workflow_call:
+    inputs:
+      dotnet-version:
+        type: string
+        required: false
+        default: 'latest'
+      warpclient-version:
+        type: string
+        required: true
+      skip-tests:
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  tests:
+    if: ${{ !inputs.skip-tests }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Build
+        run: dotnet build WarpClient.slnx --configuration Release /p:Version=${{ inputs.warpclient-version }}
+
+      - name: Run unit tests
+        run: dotnet test tests/WarpClient.Tests --configuration Release --no-build --verbosity normal

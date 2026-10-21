@@ -1,0 +1,25 @@
+name: "PR Workflow"
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    uses: ./.github/workflows/reusable-version.yml
+
+  build:
+    needs: version
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      dotnet-version: ${{ needs.version.outputs.dotnet-version }}
+      warpclient-version: ${{ needs.version.outputs.warpclient-version }}
+
+  test-unit:
+    needs: [version, build]
+    uses: ./.github/workflows/reusable-test.yml
+    with:
+      dotnet-version: ${{ needs.version.outputs.dotnet-version }}
+      warpclient-version: ${{ needs.version.outputs.warpclient-version }}

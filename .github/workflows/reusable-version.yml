@@ -1,0 +1,42 @@
+on:
+  workflow_call:
+    inputs:
+      dotnet-version:
+        type: string
+        required: false
+        default: 'latest'
+    outputs:
+      dotnet-version:
+        description: "Selected .NET SDK Version"
+        value: ${{ jobs.version.outputs.dotnet-version }}
+      warpclient-version:
+        description: "Generated WarpClient Version"
+        value: ${{ jobs.version.outputs.warpclient-version }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      dotnet-version: ${{ steps.dotnet-version.outputs.result }}
+      warpclient-version: ${{ steps.warpclient-version.outputs.result }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set .NET SDK version
+        id: dotnet-version
+        env:
+          DOTNET_VERSION: ${{ inputs.dotnet-version || 'latest' }}
+        run: echo "result=$DOTNET_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: ${{ steps.dotnet-version.outputs.result }}
+
+      # The timestamp is frozen once so every job builds and packs the same yy.M.d.<time bucket> version.
+      - name: Set WarpClient version
+        id: warpclient-version
+        run: |
+          version_timestamp="$(date -u '+%y %m %d %H %M %S')"
+          version="$(dotnet msbuild src/WarpClient/WarpClient.csproj -getProperty:PackageVersion "-p:VersionTimestamp=$version_timestamp")"
+          echo "result=$version" >> "$GITHUB_OUTPUT"

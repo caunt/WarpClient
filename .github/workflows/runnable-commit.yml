@@ -1,0 +1,52 @@
+name: "Commit Workflow"
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      dotnet-version:
+        description: Full version of .NET SDK
+        default: 'latest'
+      skip-tests:
+        description: Skip running dotnet tests
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: commit-workflow
+  cancel-in-progress: false
+
+jobs:
+  version:
+    uses: ./.github/workflows/reusable-version.yml
+    with:
+      dotnet-version: ${{ github.event.inputs.dotnet-version }}
+
+  build:
+    needs: version
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      dotnet-version: ${{ needs.version.outputs.dotnet-version }}
+      warpclient-version: ${{ needs.version.outputs.warpclient-version }}
+
+  test-unit:
+    needs: [version, build]
+    uses: ./.github/workflows/reusable-test.yml
+    with:
+      dotnet-version: ${{ needs.version.outputs.dotnet-version }}
+      warpclient-version: ${{ needs.version.outputs.warpclient-version }}
+      skip-tests: ${{ fromJSON(github.event.inputs.skip-tests || 'false') }}
+
+  nuget:
+    needs: [version, build, test-unit]
+    if: ${{ !failure() && !cancelled() }}
+    uses: ./.github/workflows/publish-nuget.yml
+    with:
+      dotnet-version: ${{ needs.version.outputs.dotnet-version }}
+      warpclient-version: ${{ needs.version.outputs.warpclient-version }}

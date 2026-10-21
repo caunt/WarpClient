@@ -1,0 +1,62 @@
+name: "NuGet Workflow"
+
+on:
+  workflow_call:
+    inputs:
+      dotnet-version:
+        type: string
+        required: false
+        default: 'latest'
+      warpclient-version:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      dotnet-version:
+        description: "Full version of .NET SDK"
+        required: false
+        default: 'latest'
+      warpclient-version:
+        description: "Version to publish"
+        required: true
+
+jobs:
+  push:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Build
+        run: dotnet build WarpClient.slnx --configuration Release /p:Version=${{ inputs.warpclient-version }}
+
+      - name: Pack WarpClient
+        run: dotnet pack src/WarpClient --configuration Release --no-build --output artifacts /p:Version=${{ inputs.warpclient-version }}
+
+      - name: Pack DependencyInjection
+        run: dotnet pack src/WarpClient.DependencyInjection --configuration Release --no-build --output artifacts /p:Version=${{ inputs.warpclient-version }}
+
+      # Trusted publishing: the job's GitHub identity is exchanged for a short-lived NuGet API key.
+      - name: NuGet Login
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: caunt
+
+      - name: NuGet Push
+        run: dotnet nuget push "artifacts/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --skip-duplicate
+
+      - name: Upload Pack Artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: nuget-packages-published
+          path: artifacts
+          compression-level: 9
+          if-no-files-found: error

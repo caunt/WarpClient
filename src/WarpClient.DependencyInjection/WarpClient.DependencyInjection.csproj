@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\WarpClient\WarpClient.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.13" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <RootNamespace>Warp.DependencyInjection</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Description>Dependency injection and IHttpClientFactory integration for WarpClient.</Description>
+    <PackageTags>cloudflare;warp;dependency-injection;httpclientfactory</PackageTags>
+  </PropertyGroup>
+
+</Project>

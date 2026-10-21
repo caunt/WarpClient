@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Warp</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Description>Cloudflare WARP for .NET: send TCP, UDP, and HTTP traffic through WARP's MASQUE tunnel without a VPN or elevated privileges.</Description>
+    <PackageTags>cloudflare;warp;masque;tunnel;networking;tcp;udp;http</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Nito.AsyncEx.Coordination" Version="5.1.2" />
+  </ItemGroup>
+
+</Project>
