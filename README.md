@@ -35,11 +35,13 @@ await using IUdpConnection udp = await warp.ConnectUdpAsync("stun.cloudflare.com
 | --- | --- | --- | --- |
 | `MasqueHttp2` (default) | TCP, UDP, IPv4, IPv6 | TCP 443 | Works wherever HTTPS does, including through HTTP proxies. |
 | `WireGuard` | TCP, UDP, IPv4, IPv6 | UDP 2408 | The classic WARP protocol, with Cloudflare's per-device routing tag. |
-| `MasqueHttp3` | TCP | UDP 443 (QUIC) | Proxy mode: one HTTP/3 `CONNECT` stream per connection; Cloudflare resolves names. Needs libmsquic on Linux. |
+| `MasqueHttp3` | TCP | UDP 443 (QUIC) | Proxy mode: one HTTP/3 `CONNECT` stream per connection; Cloudflare resolves names. Needs libmsquic on Linux and macOS (see below). |
 
 ```csharp
 await using WarpClient warp = await WarpClient.CreateAsync(new WarpClientOptions { Transport = WarpTransport.WireGuard });
 ```
+
+HTTP/3 uses .NET's QUIC support, which loads libmsquic: install the `libmsquic` package on Linux; on macOS run `brew install libmsquic` and start the app with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib`, because .NET does not search Homebrew's folder.
 
 A device holds one tunnel key at a time, so switching between WireGuard and MASQUE re-enrolls the device's key through Cloudflare's API on the next connection. Both keys stay in the registration file.
 
@@ -96,7 +98,7 @@ The research behind this — registration API, WireGuard and MASQUE transports, 
 | --- | --- |
 | MASQUE over HTTP/2 | End to end against Cloudflare: HTTP, raw TCP, UDP (STUN), and IPv6. |
 | Registration, account details, switching transports | Against Cloudflare's live device API. |
-| WireGuard | Handshake, routing tag, and encrypted traffic both ways against the independent [noiseprotocol](https://github.com/plizonczyk/noiseprotocol) implementation over loopback UDP; not yet against Cloudflare's endpoint. |
+| WireGuard | End to end against Cloudflare on macOS: HTTP, raw TCP, UDP (STUN), and IPv6. Also against the independent [noiseprotocol](https://github.com/plizonczyk/noiseprotocol) implementation over loopback UDP. |
 | MASQUE over HTTP/3 | QPACK and HTTP/3 framing unit tests; not yet against Cloudflare's endpoint. |
 | WARP+ licenses, Zero Trust | Implemented from community research; not yet exercised. |
 
