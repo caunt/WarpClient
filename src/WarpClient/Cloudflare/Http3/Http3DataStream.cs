@@ -49,6 +49,10 @@ internal sealed class Http3DataStream(ManagedQuicStream stream) : Stream
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
+        // A zero-byte read waits for data without consuming any, so frame headers are left for the next real read.
+        if (buffer.IsEmpty)
+            return _ended ? 0 : await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
         while (_remaining == 0)
         {
             if (_ended)

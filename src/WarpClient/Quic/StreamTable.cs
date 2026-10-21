@@ -312,6 +312,10 @@ internal sealed class StreamTable(QuicClientOptions options)
 
         read = stream.Receive.Read(destination);
 
+        // A zero-byte read only waits until data is available, which SslStream uses before it rents a buffer.
+        if (destination.IsEmpty)
+            return stream.Receive.AvailableLength > 0 || stream.IsReadComplete;
+
         if (read == 0)
             return stream.IsReadComplete;
 

@@ -83,6 +83,7 @@ internal sealed class TransportParameters
         QuicWriter writer = new();
 
         WriteInteger(writer, MaximumIdleTimeoutId, MaximumIdleTimeout);
+        WriteInteger(writer, MaximumUdpPayloadSizeId, MaximumUdpPayloadSize);
         WriteInteger(writer, InitialMaximumDataId, InitialMaximumData);
         WriteInteger(writer, InitialMaximumStreamDataBidirectionalLocalId, InitialMaximumStreamDataBidirectionalLocal);
         WriteInteger(writer, InitialMaximumStreamDataBidirectionalRemoteId, InitialMaximumStreamDataBidirectionalRemote);

@@ -60,6 +60,7 @@ internal sealed class QuicConnectionCore : ISentFrameHandler
     {
         _options = options;
         _maximumDatagramSize = Math.Max(options.MaximumDatagramSize, MinimumInitialDatagramSize);
+
         _recovery = new RecoveryState(_maximumDatagramSize);
         _lossDetector = new LossDetector(_recovery, _spaces, this);
         _streams = new StreamTable(options);
@@ -73,6 +74,7 @@ internal sealed class QuicConnectionCore : ISentFrameHandler
         TransportParameters local = new()
         {
             MaximumIdleTimeout = _idleTimeout,
+            MaximumUdpPayloadSize = _maximumDatagramSize,
             InitialMaximumData = options.ReceiveWindow,
             InitialMaximumStreamDataBidirectionalLocal = options.StreamReceiveWindow,
             InitialMaximumStreamDataBidirectionalRemote = options.StreamReceiveWindow,

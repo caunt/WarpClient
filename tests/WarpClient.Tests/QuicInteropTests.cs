@@ -232,9 +232,12 @@ public sealed class QuicInteropTests
                     await stream.WriteAsync(payload, cancellation.Token).ConfigureAwait(continueOnCapturedContext: true);
                     await stream.CompleteWritesAsync(cancellation.Token).ConfigureAwait(continueOnCapturedContext: true);
 
+                    // SslStream waits with a zero-byte read before every record, which must complete once data arrives.
+                    int signalled = await stream.ReadAsync(Memory<byte>.Empty, cancellation.Token).ConfigureAwait(continueOnCapturedContext: true);
                     byte[] echoed = await ReadToEndAsync(stream, cancellation.Token).ConfigureAwait(continueOnCapturedContext: true);
 
                     Assert.Equal("hello"u8.ToArray(), greeting);
+                    Assert.Equal(expected: 0, signalled);
                     Assert.Equal(payload, echoed);
                 }
             }

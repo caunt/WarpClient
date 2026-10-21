@@ -22,6 +22,7 @@ internal sealed class MasqueHttp3Connection : IAsyncDisposable
     private readonly CancellationTokenSource _stopping = new();
     private volatile bool _closed;
     private ManagedQuicStream? _controlStream;
+    private int _disposed;
     private Task _draining = Task.CompletedTask;
 
     private MasqueHttp3Connection(ManagedQuicConnection connection)
@@ -81,6 +82,9 @@ internal sealed class MasqueHttp3Connection : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, value: 1) != 0)
+            return;
+
         _closed = true;
         await _stopping.CancelAsync().ConfigureAwait(continueOnCapturedContext: false);
 
@@ -145,6 +149,7 @@ internal sealed class MasqueHttp3Connection : IAsyncDisposable
             throw;
         }
     }
+
 
     private async Task DrainAsync(ManagedQuicStream inbound, CancellationToken cancellationToken)
     {
