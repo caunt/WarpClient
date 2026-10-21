@@ -111,6 +111,7 @@ The research behind this — registration API, WireGuard and MASQUE transports, 
 
 - HTTP/3 proxy mode carries TCP only.
 - QUIC sends 1350-byte packets without path MTU discovery, and offers only the TLS profile Cloudflare uses: P-256 key exchange and ECDSA P-256 server keys.
+- Some networks block every path to WARP: UDP is refused, Cloudflare's MASQUE addresses are filtered (162.159.198.2 times out from some countries), or a transparent proxy routes TLS by server name, which drops MASQUE because its server names have no DNS records. An HTTP proxy in `Underlay` (used by default from `HTTPS_PROXY`) avoids the last one.
 - WireGuard does not answer cookie replies, which Cloudflare only sends under load.
 - The TCP implementation favours simplicity: no congestion control, selective acknowledgments, or window scaling.
 - Registering a device accepts Cloudflare's [terms of service](https://www.cloudflare.com/application/terms/).

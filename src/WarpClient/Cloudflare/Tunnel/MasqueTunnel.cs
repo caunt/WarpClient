@@ -243,7 +243,20 @@ internal sealed class MasqueTunnel : IPacketTunnel
                 certificate is X509Certificate2 serverCertificate && serverCertificate.PublicKey.ExportSubjectPublicKeyInfo().AsSpan().SequenceEqual(pinnedKey),
         };
 
-        await _transport.AuthenticateAsClientAsync(options, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        try
+        {
+            await _transport.AuthenticateAsClientAsync(options, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        }
+        catch (IOException exception)
+        {
+            // MASQUE server names have no DNS records, so middleboxes that route TLS by server name cannot forward them.
+            throw new IOException(
+                $"The TLS handshake for {serverName} was closed before Cloudflare answered. Networks that route TLS by server name drop it, "
+                + "because the name has no DNS records, and some networks block the MASQUE endpoint itself; route the tunnel through an HTTP proxy "
+                + "with WarpClientOptions.Underlay, or try another transport or network.",
+                exception
+            );
+        }
     }
 
     private async ValueTask CreditReceivedAsync(int length, bool tunnelData, CancellationToken cancellationToken)
