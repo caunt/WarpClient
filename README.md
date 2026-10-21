@@ -36,7 +36,7 @@ await using IUdpConnection udp = await warp.ConnectUdpAsync("stun.cloudflare.com
 | --- | --- | --- | --- |
 | `MasqueHttp2` (default) | TCP, UDP, IPv4, IPv6 | TCP 443 | Works wherever HTTPS does, including through HTTP proxies. |
 | `MasqueHttp3` | TCP, UDP, IPv4, IPv6 | UDP 443 (QUIC) | The protocol of Cloudflare's own apps: IP packets travel as QUIC datagrams. |
-| `MasqueHttp3Proxy` | TCP | UDP 443 (QUIC) | Proxy mode: one HTTP/3 `CONNECT` stream per connection; Cloudflare resolves names. |
+| `MasqueHttp3Proxy` | TCP | UDP 443 (QUIC) | Proxy mode: one HTTP/3 `CONNECT` stream per connection, without an IP stack. |
 | `WireGuard` | TCP, UDP, IPv4, IPv6 | UDP 2408 | The classic WARP protocol, with Cloudflare's per-device routing tag. |
 
 ```csharp
@@ -91,7 +91,7 @@ WarpClientOptions options = new()
 3. **WireGuard** runs the standard Noise IKpsk2 handshake and writes the registration's `client_id` into the reserved header bytes of every message.
 4. **MASQUE over HTTP/3** opens one extended CONNECT with `:protocol cf-connect-ip`, after which every IP packet is an HTTP datagram in a QUIC DATAGRAM frame. QUIC v1 and its TLS 1.3 handshake (P-256, AES-128-GCM, the same server key pin and client certificate) are implemented in managed code on BouncyCastle.
 5. With any IP tunnel, a small userspace IPv4/IPv6 stack turns packets into TCP connections and UDP datagrams, and DNS goes to 1.1.1.1 inside the tunnel.
-6. **MASQUE proxy mode** skips the IP layer: each TCP connection is an HTTP/3 `CONNECT host:port` stream on a shared QUIC connection.
+6. **MASQUE proxy mode** skips the IP layer: each TCP connection is an HTTP/3 `CONNECT address:port` stream on a shared QUIC connection. Cloudflare refuses host names there, so they are resolved first with DNS over TCP to 1.1.1.1, carried by the proxy as well.
 
 The research behind this — registration API, WireGuard and MASQUE transports, and how community clients work — is in [`reports/`](reports/).
 
@@ -103,7 +103,8 @@ The research behind this — registration API, WireGuard and MASQUE transports, 
 | Registration, account details, switching transports | Against Cloudflare's live device API. |
 | WireGuard | End to end against Cloudflare on macOS: HTTP, raw TCP, UDP (STUN), and IPv6. Also against the independent [noiseprotocol](https://github.com/plizonczyk/noiseprotocol) implementation over loopback UDP. |
 | QUIC and TLS 1.3 | RFC 9001 test vectors; against msquic over loopback with mutual TLS, flow control and a path dropping every seventh datagram. |
-| MASQUE over HTTP/3, proxy mode | Against an [aioquic](https://github.com/aiortc/aioquic) stand-in over loopback: SETTINGS, the `cf-connect-ip` request, datagrams up to 1280-byte packets, and proxied streams. Not yet against Cloudflare's endpoint. |
+| MASQUE over HTTP/3 | End to end against Cloudflare on macOS: HTTP, raw TCP, UDP (STUN), and IPv6. Also against an [aioquic](https://github.com/aiortc/aioquic) stand-in over loopback. |
+| MASQUE proxy mode | Against the aioquic stand-in over loopback, including DNS through the proxy. Against Cloudflare, the handshake succeeds and CONNECT by host name is refused with HTTP 403; connecting by resolved address is not yet confirmed. |
 | WARP+ licenses, Zero Trust | Implemented from community research; not yet exercised. |
 
 ## Limitations

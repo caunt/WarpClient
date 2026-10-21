@@ -19,9 +19,8 @@ public enum WarpTransport
     WireGuard = 1,
 
     /// <summary>
-    /// MASQUE proxy mode: each TCP connection is its own HTTP/3 <c>CONNECT</c> stream over QUIC on UDP port 443, and
-    /// Cloudflare resolves host names. Carries TCP only and needs outbound UDP. Earlier releases named this value
-    /// <c>MasqueHttp3</c>.
+    /// MASQUE proxy mode: each TCP connection is its own HTTP/3 <c>CONNECT</c> stream over QUIC on UDP port 443, with no IP
+    /// layer in between. Carries TCP only and needs outbound UDP. Earlier releases named this value <c>MasqueHttp3</c>.
     /// </summary>
     MasqueHttp3Proxy = 2,
 
