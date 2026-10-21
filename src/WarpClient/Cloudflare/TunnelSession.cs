@@ -29,7 +29,7 @@ internal sealed class TunnelSession : IAsyncDisposable
 
     public static async ValueTask<TunnelSession> OpenAsync(WarpClientOptions options, CancellationToken cancellationToken)
     {
-        DeviceRegistration registration = await DeviceRegistrationStore.LoadOrRegisterAsync(options.RegistrationPath, options.Underlay, cancellationToken)
+        DeviceRegistration registration = await DeviceRegistrationStore.LoadOrRegisterAsync(options, cancellationToken)
             .ConfigureAwait(continueOnCapturedContext: false);
 
         MasqueTunnel tunnel = await MasqueTunnel.OpenAsync(registration, options.Underlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);

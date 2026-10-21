@@ -3,6 +3,7 @@ using System.Net;
 using Nito.AsyncEx;
 
 using Warp.Cloudflare;
+using Warp.Cloudflare.Registration;
 
 namespace Warp;
 
@@ -133,6 +134,18 @@ public sealed class WarpClient(WarpClientOptions? options = null) : ITcpConnecto
 
             _session = null;
         }
+    }
+
+    /// <summary>
+    /// Reads the Cloudflare account behind this device, registering the device first if needed.
+    /// </summary>
+    /// <param name="cancellationToken">Aborts the request to Cloudflare's device API.</param>
+    /// <returns>The account's plan, WARP+ status and data allowance.</returns>
+    public async ValueTask<WarpAccount> GetAccountAsync(CancellationToken cancellationToken = default)
+    {
+        AccountResponse account = await DeviceRegistrationStore.GetAccountAsync(_options, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+        return new WarpAccount(account.AccountType ?? "unknown", account.WarpPlus, account.PremiumData, account.Quota, account.Role ?? "unknown");
     }
 
     /// <inheritdoc />

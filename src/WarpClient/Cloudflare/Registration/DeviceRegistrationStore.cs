@@ -3,22 +3,47 @@ using System.Text.Json;
 namespace Warp.Cloudflare.Registration;
 
 /// <summary>
-/// Keeps the device registration in a JSON file readable only by its owner, registering a new device the first time.
+/// Keeps the device registration in a JSON file readable only by its owner, registering a new device the first time and
+/// binding the configured WARP+ license once.
 /// </summary>
 internal static class DeviceRegistrationStore
 {
-    public static async ValueTask<DeviceRegistration> LoadOrRegisterAsync(string path, ITcpConnector underlay, CancellationToken cancellationToken)
+    public static async ValueTask<AccountResponse> GetAccountAsync(WarpClientOptions options, CancellationToken cancellationToken)
     {
-        if (File.Exists(path))
-            return await LoadAsync(path, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        DeviceRegistration registration = await LoadOrRegisterAsync(options, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
-        using SocketsHttpHandler handler = underlay.CreateHttpMessageHandler();
+        using SocketsHttpHandler handler = options.Underlay.CreateHttpMessageHandler();
 
         using HttpClient httpClient = new(handler, disposeHandler: false);
 
-        DeviceRegistration registration = await new DeviceRegistrationClient(httpClient).RegisterAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        return await new DeviceRegistrationClient(httpClient).GetAccountAsync(registration, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    }
 
-        await SaveAsync(path, registration, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    public static async ValueTask<DeviceRegistration> LoadOrRegisterAsync(WarpClientOptions options, CancellationToken cancellationToken)
+    {
+        using SocketsHttpHandler handler = options.Underlay.CreateHttpMessageHandler();
+
+        using HttpClient httpClient = new(handler, disposeHandler: false);
+
+        DeviceRegistrationClient client = new(httpClient);
+        bool exists = File.Exists(options.RegistrationPath);
+
+        DeviceRegistration registration = exists
+            ? await LoadAsync(options.RegistrationPath, cancellationToken).ConfigureAwait(continueOnCapturedContext: false)
+            : await client.RegisterAsync(options.TeamToken, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+        bool licenseChanged = false;
+
+        if (options.LicenseKey is string licenseKey && licenseKey != registration.LicenseKey)
+        {
+            AccountResponse account = await client.BindLicenseAsync(registration, licenseKey, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+            registration = registration with { LicenseKey = licenseKey };
+            licenseChanged = account.AccountType is not null;
+        }
+
+        if (!exists || licenseChanged)
+            await SaveAsync(options.RegistrationPath, registration, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
         return registration;
     }
@@ -40,13 +65,14 @@ internal static class DeviceRegistrationStore
         if (directory is not null)
             new DirectoryInfo(directory).Create();
 
-        FileStreamOptions options = new() { Mode = FileMode.CreateNew, Access = FileAccess.Write };
+        // Truncating keeps an existing file's owner-only permissions; a new file is created with them.
+        FileStreamOptions fileOptions = new() { Mode = FileMode.Create, Access = FileAccess.Write };
 
         // The file holds the device's private key and access token, so nobody else may read it.
         if (!OperatingSystem.IsWindows())
-            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            fileOptions.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
 
-        using FileStream stream = new(path, options);
+        using FileStream stream = new(path, fileOptions);
 
         await JsonSerializer.SerializeAsync(stream, registration, RegistrationJsonContext.Relaxed.DeviceRegistration, cancellationToken)
             .ConfigureAwait(continueOnCapturedContext: false);

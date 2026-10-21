@@ -8,6 +8,8 @@ namespace Warp.Cloudflare.Registration;
 [JsonSerializable(typeof(EnrollmentRequest))]
 [JsonSerializable(typeof(DeviceResponse))]
 [JsonSerializable(typeof(DeviceRegistration))]
+[JsonSerializable(typeof(AccountResponse))]
+[JsonSerializable(typeof(LicenseRequest))]
 internal sealed partial class RegistrationJsonContext : JsonSerializerContext
 {
     /// <summary>

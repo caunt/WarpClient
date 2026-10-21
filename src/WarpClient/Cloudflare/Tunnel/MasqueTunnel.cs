@@ -52,6 +52,7 @@ internal sealed class MasqueTunnel : IPacketTransmitter, IAsyncDisposable
     private const int UserAgentHeaderIndex = 58;
     private const byte WindowUpdateFrame = 0x8;
     private const int WindowUpdateThreshold = 1024 * 1024;
+    private const string ZeroTrustServerName = "zt-masque.cloudflareclient.com";
     private static readonly byte[] ConnectionPreface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"u8.ToArray();
 
     private readonly AsyncLock _writeMutex = new();
@@ -86,7 +87,7 @@ internal sealed class MasqueTunnel : IPacketTransmitter, IAsyncDisposable
         {
             try
             {
-                return await OpenAsync(endpoint, registration.PrivateKey, pinnedKey, underlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+                return await OpenAsync(endpoint, registration, pinnedKey, underlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
             }
             catch (IOException exception)
             {
@@ -143,14 +144,14 @@ internal sealed class MasqueTunnel : IPacketTransmitter, IAsyncDisposable
         }
     }
 
-    private static async ValueTask<MasqueTunnel> OpenAsync(string endpoint, string privateKey, byte[] pinnedKey, ITcpConnector underlay, CancellationToken cancellationToken)
+    private static async ValueTask<MasqueTunnel> OpenAsync(string endpoint, DeviceRegistration registration, byte[] pinnedKey, ITcpConnector underlay, CancellationToken cancellationToken)
     {
         Stream connection = await underlay.ConnectAsync(new DnsEndPoint(endpoint, ServerPort), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        MasqueTunnel tunnel = new(connection, privateKey);
+        MasqueTunnel tunnel = new(connection, registration.PrivateKey);
 
         try
         {
-            await tunnel.AuthenticateAsync(pinnedKey, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+            await tunnel.AuthenticateAsync(registration.IsZeroTrust ? ZeroTrustServerName : ServerName, pinnedKey, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
             await tunnel.HandshakeAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
             return tunnel;
@@ -230,11 +231,11 @@ internal sealed class MasqueTunnel : IPacketTransmitter, IAsyncDisposable
         }
     }
 
-    private async ValueTask AuthenticateAsync(byte[] pinnedKey, CancellationToken cancellationToken)
+    private async ValueTask AuthenticateAsync(string serverName, byte[] pinnedKey, CancellationToken cancellationToken)
     {
         SslClientAuthenticationOptions options = new()
         {
-            TargetHost = ServerName,
+            TargetHost = serverName,
             ApplicationProtocols = [SslApplicationProtocol.Http2],
             ClientCertificates = [_identity.Certificate],
             RemoteCertificateValidationCallback = (sender, certificate, chain, errors) =>

@@ -18,6 +18,13 @@ WarpClient warpClient = new();
 
 await using ConfiguredAsyncDisposable warpClientDisposal = warpClient.ConfigureAwait(continueOnCapturedContext: false);
 
+if (!direct)
+{
+    WarpAccount account = await warpClient.GetAccountAsync().ConfigureAwait(continueOnCapturedContext: false);
+
+    Console.WriteLine($"Account: {account.AccountType}, role {account.Role}, WARP+ {(account.IsWarpPlus ? "on" : "off")}");
+}
+
 ITcpConnector tcpConnector = direct ? new DirectTcpConnector() : warpClient;
 IUdpConnector udpConnector = direct ? new DirectUdpConnector() : warpClient;
 
