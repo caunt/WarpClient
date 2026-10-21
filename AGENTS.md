@@ -4,8 +4,7 @@
 
 This repository is a .NET 10 solution for a Cloudflare WARP client library.
 
-- `src/WarpClient/`: core library. Public API at the project root; `Cloudflare/Registration/` holds the device API, `Cloudflare/Tunnel/` MASQUE over HTTP/2, `Cloudflare/WireGuard/` WireGuard, `Cloudflare/Http3/` MASQUE over HTTP/3 (IP tunnel and proxy mode), `Quic/` the managed QUIC v1 client and its TLS 1.3 handshake, and `Networking/` the userspace IPv4/IPv6 stack (`Packets/`, `Tcp/`, `Dns/`).
-- `src/WarpClient.DependencyInjection/`: service registration and `IHttpClientFactory` integration.
+- `src/WarpClient/`: core library. Public API at the project root, with `DependencyInjection/` holding service registration and `IHttpClientFactory` integration; `Cloudflare/Registration/` holds the device API, `Cloudflare/Tunnel/` MASQUE over HTTP/2, `Cloudflare/WireGuard/` WireGuard, `Cloudflare/Http3/` MASQUE over HTTP/3 (IP tunnel and proxy mode), `Quic/` the managed QUIC v1 client and its TLS 1.3 handshake, and `Networking/` the userspace IPv4/IPv6 stack (`Packets/`, `Tcp/`, `Dns/`).
 - `src/WarpClient.Playground/`: runs HTTP, TCP, UDP, and IPv6 checks through WARP (`--transport=http2|http3|http3-proxy|wireguard` picks the transport, `--account` also prints the device account, `--direct` uses the host's sockets instead).
 - `tests/WarpClient.Tests/`: xUnit tests for protocol framing, packet formats, and loopback connector behaviour.
 - `reports/`, `research_notes/`: protocol research the implementation is based on.
@@ -32,7 +31,7 @@ Tests use xUnit in `tests/WarpClient.Tests`. Prefer behavioural tests against lo
 
 ## Commit & Pull Request Guidelines
 
-Use concise imperative commit messages, for example `Add UDP connector loopback tests`. Every push to `main` publishes both packages to NuGet with a date-based version (`yy.M.d.<time bucket>`), so keep `main` releasable.
+Use concise imperative commit messages, for example `Add UDP connector loopback tests`. Every push to `main` publishes the package to NuGet with a date-based version (`yy.M.d.<time bucket>`), so keep `main` releasable.
 
 ## Security & Configuration Tips
 

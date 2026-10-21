@@ -1,6 +1,5 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/WarpClient.DependencyInjection/WarpClient.DependencyInjection.csproj" />
     <Project Path="src/WarpClient.Playground/WarpClient.Playground.csproj" />
     <Project Path="src/WarpClient/WarpClient.csproj" />
   </Folder>

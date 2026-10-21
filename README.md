@@ -59,7 +59,7 @@ Console.WriteLine($"{account.AccountType}, WARP+ {account.IsWarpPlus}");
 
 ## Dependency Injection
 
-Install `WarpClient.DependencyInjection` and register with your service collection:
+Register with your service collection; the extensions ship in the same package:
 
 ```csharp
 builder.Services.AddWarpClient(options => options.Transport = WarpTransport.MasqueHttp2);

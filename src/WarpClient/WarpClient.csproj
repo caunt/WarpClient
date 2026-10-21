@@ -4,11 +4,12 @@
     <RootNamespace>Warp</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Description>Cloudflare WARP for .NET: send TCP, UDP, and HTTP traffic through WARP over MASQUE (HTTP/2 or HTTP/3) or WireGuard, without a VPN or elevated privileges.</Description>
-    <PackageTags>cloudflare;warp;masque;wireguard;http3;quic;tunnel;networking;tcp;udp;http</PackageTags>
+    <PackageTags>cloudflare;warp;masque;wireguard;http3;quic;tunnel;networking;tcp;udp;http;dependency-injection;httpclientfactory</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.13" />
     <PackageReference Include="Nito.AsyncEx.Coordination" Version="5.1.2" />
   </ItemGroup>
 

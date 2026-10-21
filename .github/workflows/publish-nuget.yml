@@ -40,9 +40,6 @@ jobs:
       - name: Pack WarpClient
         run: dotnet pack src/WarpClient --configuration Release --no-build --output artifacts /p:Version=${{ inputs.warpclient-version }}
 
-      - name: Pack DependencyInjection
-        run: dotnet pack src/WarpClient.DependencyInjection --configuration Release --no-build --output artifacts /p:Version=${{ inputs.warpclient-version }}
-
       # Trusted publishing: the job's GitHub identity is exchanged for a short-lived NuGet API key.
       - name: NuGet Login
         id: login
