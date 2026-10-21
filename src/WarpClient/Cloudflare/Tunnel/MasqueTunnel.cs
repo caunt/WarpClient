@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Security;
+using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -56,6 +57,8 @@ internal sealed class MasqueTunnel : IPacketTunnel
     private const string ZeroTrustServerName = "zt-masque.cloudflareclient.com";
     private static readonly byte[] ConnectionPreface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"u8.ToArray();
 
+    private static readonly TimeSpan[] RetryDelays = [TimeSpan.FromSeconds(seconds: 1), TimeSpan.FromSeconds(seconds: 2), TimeSpan.FromSeconds(seconds: 4)];
+
     private readonly AsyncLock _writeMutex = new();
     private readonly CapsuleParser _capsuleParser = new();
     private readonly ClientIdentity _identity;
@@ -81,23 +84,59 @@ internal sealed class MasqueTunnel : IPacketTunnel
     public static async ValueTask<MasqueTunnel> OpenAsync(DeviceRegistration registration, ITcpConnector underlay, CancellationToken cancellationToken)
     {
         byte[] pinnedKey = ReadServerKey(registration.ServerPublicKey);
-        string?[] endpoints = [registration.EndpointIpv4, registration.EndpointIpv6];
+        string[] endpoints = [.. new[] { registration.EndpointIpv4, registration.EndpointIpv6 }.OfType<string>()];
+
         List<Exception> failures = [];
 
-        foreach (string endpoint in endpoints.OfType<string>())
+        for (int attempt = 0; attempt <= RetryDelays.Length; attempt++)
         {
-            try
+            bool reached = false;
+
+            failures.Clear();
+
+
+            foreach (string endpoint in endpoints)
             {
-                return await OpenAsync(endpoint, registration, pinnedKey, underlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+                Stream connection;
+
+                try
+                {
+                    connection = await underlay.ConnectAsync(new DnsEndPoint(endpoint, ServerPort), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+                }
+                catch (IOException exception)
+                {
+                    failures.Add(exception);
+
+                    continue;
+                }
+                catch (SocketException exception)
+                {
+                    failures.Add(exception);
+
+                    continue;
+                }
+
+                reached = true;
+
+                try
+                {
+                    return await EstablishAsync(connection, registration, pinnedKey, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+                }
+                catch (IOException exception)
+                {
+                    failures.Add(exception);
+                }
+                catch (AuthenticationException exception)
+                {
+                    failures.Add(exception);
+                }
             }
-            catch (IOException exception)
-            {
-                failures.Add(exception);
-            }
-            catch (AuthenticationException exception)
-            {
-                failures.Add(exception);
-            }
+
+            // A refused connection can be a passing network fault; one that was reached and then failed will fail again.
+            if (reached || attempt == RetryDelays.Length)
+                break;
+
+            await Task.Delay(RetryDelays[attempt], cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         }
 
         throw new IOException(message: "None of Cloudflare's MASQUE endpoints accepted the tunnel.", new AggregateException(failures));
@@ -158,9 +197,8 @@ internal sealed class MasqueTunnel : IPacketTunnel
         }
     }
 
-    private static async ValueTask<MasqueTunnel> OpenAsync(string endpoint, DeviceRegistration registration, byte[] pinnedKey, ITcpConnector underlay, CancellationToken cancellationToken)
+    private static async ValueTask<MasqueTunnel> EstablishAsync(Stream connection, DeviceRegistration registration, byte[] pinnedKey, CancellationToken cancellationToken)
     {
-        Stream connection = await underlay.ConnectAsync(new DnsEndPoint(endpoint, ServerPort), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         MasqueTunnel tunnel = new(connection, registration.PrivateKey);
 
         try

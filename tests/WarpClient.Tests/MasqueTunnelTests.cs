@@ -61,6 +61,55 @@ public sealed class MasqueTunnelTests
         await closing.ConfigureAwait(continueOnCapturedContext: true);
     }
 
+    /// <summary>
+    /// When every endpoint refuses the connection, as a proxy does while its route is briefly down, the tunnel tries again
+    /// instead of failing on the first refusal.
+    /// </summary>
+    /// <returns>A task that completes when the retry has been verified.</returns>
+    [Fact]
+    public async Task RefusedEndpointsAreRetried()
+    {
+        using CancellationTokenSource cancellation = new(Timeout);
+
+        using ECDsa deviceKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+
+        using ECDsa serverKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+
+        TaskCompletionSource<int> port = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task closing = CloseEveryConnectionAsync(port, cancellation.Token);
+
+        DeviceRegistration registration = new(
+            DeviceId: "loopback",
+            AccessToken: "unused",
+            Convert.ToBase64String(deviceKey.ExportPkcs8PrivateKey()),
+            serverKey.ExportSubjectPublicKeyInfoPem(),
+            EndpointIpv4: "127.0.0.1",
+            EndpointIpv6: "::1",
+            AddressIpv4: "172.16.0.2",
+            AddressIpv6: null
+        );
+
+        FlakyTcpConnector underlay = new(refusals: 2, await port.Task.ConfigureAwait(continueOnCapturedContext: true));
+
+        IOException exception = await Assert.ThrowsAsync<IOException>(
+            async () =>
+            {
+                MasqueTunnel tunnel = await MasqueTunnel.OpenAsync(registration, underlay, cancellation.Token).ConfigureAwait(continueOnCapturedContext: true);
+
+                await tunnel.DisposeAsync().ConfigureAwait(continueOnCapturedContext: true);
+            }
+        ).ConfigureAwait(continueOnCapturedContext: true);
+
+        AggregateException failures = Assert.IsType<AggregateException>(exception.InnerException);
+
+        // The second round reached the server, so its handshake failure is what gets reported.
+        Assert.Equal(expected: 4, underlay.Attempts);
+        Assert.Contains(expectedSubstring: "route TLS by server name", failures.InnerExceptions[index: 0].Message, StringComparison.Ordinal);
+
+        await cancellation.CancelAsync().ConfigureAwait(continueOnCapturedContext: true);
+        await closing.ConfigureAwait(continueOnCapturedContext: true);
+    }
+
     // Accepts connections and closes them at once, like a middlebox with nowhere to send them.
     private static async Task CloseEveryConnectionAsync(TaskCompletionSource<int> port, CancellationToken cancellationToken)
     {
