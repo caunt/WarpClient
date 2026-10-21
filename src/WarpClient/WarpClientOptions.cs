@@ -37,4 +37,15 @@ public sealed class WarpClientOptions
     /// Defaults to <see cref="SystemProxyTcpConnector"/>, which honours the system proxy like <see cref="HttpClient"/> does.
     /// </summary>
     public ITcpConnector Underlay { get; set; } = new SystemProxyTcpConnector();
+
+    /// <summary>
+    /// Gets or sets the protocol that carries traffic to Cloudflare. Defaults to <see cref="WarpTransport.MasqueHttp2"/>,
+    /// which works wherever HTTPS does; <see cref="WarpTransport.WireGuard"/> needs outbound UDP.
+    /// </summary>
+    public WarpTransport Transport { get; set; } = WarpTransport.MasqueHttp2;
+
+    /// <summary>
+    /// Gets or sets the network path for the WireGuard transport's UDP datagrams. Defaults to the host's own sockets.
+    /// </summary>
+    public IUdpConnector UdpUnderlay { get; set; } = new DirectUdpConnector();
 }

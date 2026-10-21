@@ -5,6 +5,8 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json.Serialization.Metadata;
 
+using Warp.Cloudflare.WireGuard;
+
 namespace Warp.Cloudflare.Registration;
 
 /// <summary>
@@ -17,6 +19,7 @@ internal sealed class DeviceRegistrationClient(HttpClient httpClient)
     private const string TeamTokenHeader = "CF-Access-Jwt-Assertion";
     // Version strings of the Android app that wgcf mimics; the API accepts a wide range of them.
     private const string UserAgent = "1.1.1.1/6.38.9-5641 (Android 16.0.0)";
+    private const int WireGuardPort = 2408;
     private static readonly Uri ApiAddress = new(uriString: "https://api.cloudflareclient.com/v0a5641/");
 
     /// <summary>
@@ -30,6 +33,56 @@ internal sealed class DeviceRegistrationClient(HttpClient httpClient)
         using HttpRequestMessage request = CreateRequest(HttpMethod.Put, $"reg/{registration.DeviceId}/account", content, registration.AccessToken);
 
         return await SendAsync(request, json.AccountResponse, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    }
+
+    /// <summary>
+    /// Switches the device back to MASQUE by enrolling its stored P-256 key again.
+    /// </summary>
+    public async ValueTask<DeviceRegistration> EnrollMasqueAsync(DeviceRegistration registration, CancellationToken cancellationToken)
+    {
+        using ECDsa key = ECDsa.Create();
+
+        key.ImportPkcs8PrivateKey(Convert.FromBase64String(registration.PrivateKey), out int bytesRead);
+
+        EnrollmentRequest enrollment = new(Convert.ToBase64String(key.ExportSubjectPublicKeyInfo()), KeyType: "secp256r1", DeviceRegistration.MasqueTunnelType);
+        DeviceResponse enrolled = await EnrollAsync(registration, enrollment, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        DevicePeer peer = GetFirstPeer(enrolled);
+        InterfaceAddresses addresses = enrolled.Configuration.Interface.Addresses;
+
+        return bytesRead == 0 ? throw new InvalidDataException(message: "The stored device key is empty.") : registration with
+        {
+            TunnelType = DeviceRegistration.MasqueTunnelType,
+            ServerPublicKey = peer.PublicKey,
+            EndpointIpv4 = ReadAddress(peer.Endpoint.Ipv4),
+            EndpointIpv6 = ReadAddress(peer.Endpoint.Ipv6),
+            AddressIpv4 = addresses.Ipv4,
+            AddressIpv6 = addresses.Ipv6,
+        };
+    }
+
+    /// <summary>
+    /// Switches the device to WireGuard by enrolling an X25519 key, reusing the stored one when the device had it before.
+    /// </summary>
+    public async ValueTask<DeviceRegistration> EnrollWireGuardAsync(DeviceRegistration registration, CancellationToken cancellationToken)
+    {
+        byte[] privateKey = registration.WireGuardPrivateKey is string stored ? Convert.FromBase64String(stored) : WireGuardCrypto.GeneratePrivateKey();
+        string publicKey = Convert.ToBase64String(WireGuardCrypto.GetPublicKey(privateKey));
+        EnrollmentRequest enrollment = new(publicKey, KeyType: "curve25519", DeviceRegistration.WireGuardTunnelType);
+        DeviceResponse enrolled = await EnrollAsync(registration, enrollment, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        DevicePeer peer = GetFirstPeer(enrolled);
+        InterfaceAddresses addresses = enrolled.Configuration.Interface.Addresses;
+        string endpoint = peer.Endpoint.Host ?? string.Create(CultureInfo.InvariantCulture, $"{ReadAddress(peer.Endpoint.Ipv4)}:{WireGuardPort}");
+
+        return registration with
+        {
+            TunnelType = DeviceRegistration.WireGuardTunnelType,
+            WireGuardPrivateKey = Convert.ToBase64String(privateKey),
+            WireGuardPeerPublicKey = peer.PublicKey,
+            WireGuardEndpoint = endpoint,
+            ClientId = enrolled.Configuration.ClientId,
+            AddressIpv4 = addresses.Ipv4,
+            AddressIpv6 = addresses.Ipv6,
+        };
     }
 
     public async ValueTask<AccountResponse> GetAccountAsync(DeviceRegistration registration, CancellationToken cancellationToken)
@@ -91,7 +144,8 @@ internal sealed class DeviceRegistrationClient(HttpClient httpClient)
             ReadAddress(peer.Endpoint.Ipv6),
             addresses.Ipv4,
             addresses.Ipv6,
-            IsZeroTrust: teamToken is not null
+            IsZeroTrust: teamToken is not null,
+            TunnelType: DeviceRegistration.MasqueTunnelType
         );
     }
 
@@ -108,10 +162,27 @@ internal sealed class DeviceRegistrationClient(HttpClient httpClient)
         return request;
     }
 
+    private static DevicePeer GetFirstPeer(DeviceResponse response)
+    {
+        return response.Configuration.Peers.Count > 0
+            ? response.Configuration.Peers[index: 0]
+            : throw new InvalidDataException(message: "Cloudflare's enrollment response has no tunnel endpoint.");
+    }
+
     // Endpoints come back as "162.159.198.2:0" or "[2606:4700:103::2]:0"; only the address matters.
     private static string? ReadAddress(string? endpoint)
     {
         return endpoint is not null && IPEndPoint.TryParse(endpoint, out IPEndPoint? parsed) ? parsed.Address.ToString() : null;
+    }
+
+    private async ValueTask<DeviceResponse> EnrollAsync(DeviceRegistration registration, EnrollmentRequest enrollment, CancellationToken cancellationToken)
+    {
+        RegistrationJsonContext json = RegistrationJsonContext.Relaxed;
+        JsonContent content = JsonContent.Create(enrollment, json.EnrollmentRequest);
+
+        using HttpRequestMessage request = CreateRequest(HttpMethod.Patch, $"reg/{registration.DeviceId}", content, registration.AccessToken);
+
+        return await SendAsync(request, json.DeviceResponse, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     }
 
     private async ValueTask<TResponse> SendAsync<TResponse>(HttpRequestMessage request, JsonTypeInfo<TResponse> responseType, CancellationToken cancellationToken)

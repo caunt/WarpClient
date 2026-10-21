@@ -21,7 +21,7 @@ namespace Warp.Cloudflare.Tunnel;
 /// <c>cloudflareaccess.com:443</c>. Authentication is mutual TLS with the enrolled device key, and the server is verified by
 /// pinning the public key returned at enrollment rather than by host name.
 /// </remarks>
-internal sealed class MasqueTunnel : IPacketTransmitter, IAsyncDisposable
+internal sealed class MasqueTunnel : IPacketTunnel
 {
     private const byte AcknowledgeFlag = 0x1;
     private const int AuthorityHeaderIndex = 1;

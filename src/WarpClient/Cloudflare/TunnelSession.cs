@@ -2,6 +2,7 @@ using System.Net;
 
 using Warp.Cloudflare.Registration;
 using Warp.Cloudflare.Tunnel;
+using Warp.Cloudflare.WireGuard;
 using Warp.Networking;
 using Warp.Networking.Dns;
 
@@ -12,9 +13,9 @@ namespace Warp.Cloudflare;
 /// </summary>
 internal sealed class TunnelSession : IAsyncDisposable
 {
-    private readonly MasqueTunnel _tunnel;
+    private readonly IPacketTunnel _tunnel;
 
-    private TunnelSession(MasqueTunnel tunnel, UserspaceNetworkStack stack)
+    private TunnelSession(IPacketTunnel tunnel, UserspaceNetworkStack stack)
     {
         this._tunnel = tunnel;
         Stack = stack;
@@ -32,7 +33,10 @@ internal sealed class TunnelSession : IAsyncDisposable
         DeviceRegistration registration = await DeviceRegistrationStore.LoadOrRegisterAsync(options, cancellationToken)
             .ConfigureAwait(continueOnCapturedContext: false);
 
-        MasqueTunnel tunnel = await MasqueTunnel.OpenAsync(registration, options.Underlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        IPacketTunnel tunnel = options.Transport == WarpTransport.WireGuard
+            ? await WireGuardTunnel.OpenAsync(registration, options.UdpUnderlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false)
+            : await MasqueTunnel.OpenAsync(registration, options.Underlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
         IPAddress? localIpv6 = registration.AddressIpv6 is null ? null : IPAddress.Parse(registration.AddressIpv6);
         UserspaceNetworkStack stack = new(tunnel, IPAddress.Parse(registration.AddressIpv4), localIpv6);
 

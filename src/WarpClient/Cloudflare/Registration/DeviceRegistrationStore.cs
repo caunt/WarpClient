@@ -42,7 +42,18 @@ internal static class DeviceRegistrationStore
             licenseChanged = account.AccountType is not null;
         }
 
-        if (!exists || licenseChanged)
+        bool wantsWireGuard = options.Transport == WarpTransport.WireGuard;
+        bool transportChanged = wantsWireGuard != registration.IsWireGuard;
+
+        // Cloudflare holds one tunnel key per device, so changing transport re-enrolls the matching key.
+        if (transportChanged)
+        {
+            registration = wantsWireGuard
+                ? await client.EnrollWireGuardAsync(registration, cancellationToken).ConfigureAwait(continueOnCapturedContext: false)
+                : await client.EnrollMasqueAsync(registration, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        }
+
+        if (!exists || licenseChanged || transportChanged)
             await SaveAsync(options.RegistrationPath, registration, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
         return registration;
