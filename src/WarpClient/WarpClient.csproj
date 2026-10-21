@@ -3,8 +3,8 @@
   <PropertyGroup>
     <RootNamespace>Warp</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <Description>Cloudflare WARP for .NET: send TCP, UDP, and HTTP traffic through WARP's MASQUE tunnel without a VPN or elevated privileges.</Description>
-    <PackageTags>cloudflare;warp;masque;tunnel;networking;tcp;udp;http</PackageTags>
+    <Description>Cloudflare WARP for .NET: send TCP, UDP, and HTTP traffic through WARP over MASQUE (HTTP/2 or HTTP/3) or WireGuard, without a VPN or elevated privileges.</Description>
+    <PackageTags>cloudflare;warp;masque;wireguard;http3;quic;tunnel;networking;tcp;udp;http</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

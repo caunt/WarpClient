@@ -4,9 +4,9 @@
 
 This repository is a .NET 10 solution for a Cloudflare WARP client library.
 
-- `src/WarpClient/`: core library. Public API at the project root; `Networking/` holds the userspace IPv4/TCP/UDP stack, `Cloudflare/Tunnel/` the MASQUE-over-HTTP/2 transport, and `Cloudflare/Registration/` the device API.
+- `src/WarpClient/`: core library. Public API at the project root; `Cloudflare/Registration/` holds the device API, `Cloudflare/Tunnel/` MASQUE over HTTP/2, `Cloudflare/WireGuard/` WireGuard, `Cloudflare/Http3/` MASQUE proxy mode over HTTP/3, and `Networking/` the userspace IPv4/IPv6 stack (`Packets/`, `Tcp/`, `Dns/`).
 - `src/WarpClient.DependencyInjection/`: service registration and `IHttpClientFactory` integration.
-- `src/WarpClient.Playground/`: runs HTTP, TCP, and UDP checks through WARP (`--direct` uses the host's sockets instead).
+- `src/WarpClient.Playground/`: runs HTTP, TCP, UDP, and IPv6 checks through WARP (`--transport=http2|wireguard|http3` picks the transport, `--direct` uses the host's sockets instead).
 - `tests/WarpClient.Tests/`: xUnit tests for protocol framing, packet formats, and loopback connector behaviour.
 - `reports/`, `research_notes/`: protocol research the implementation is based on.
 - `WarpClient.slnx`: solution entry point.
@@ -28,7 +28,7 @@ This repository is a .NET 10 solution for a Cloudflare WARP client library.
 
 ## Testing Guidelines
 
-Tests use xUnit in `tests/WarpClient.Tests`. Prefer behavioural tests against loopback servers for public connectors and focused round-trip tests for wire formats. Do not add tests that contact Cloudflare. Name tests as `ScenarioConditionExpectedBehavior` without underscores (CA1707 is enforced), and use `TheoryData<T>` with `MemberData` instead of `InlineData`, which boxes values.
+Tests use xUnit in `tests/WarpClient.Tests`. Prefer behavioural tests against loopback servers for public connectors and focused round-trip tests for wire formats. Do not add tests that contact Cloudflare. WireGuard interoperability was checked manually against the Python noiseprotocol library acting as a loopback responder; repeat that after changing the handshake or transport framing. Name tests as `ScenarioConditionExpectedBehavior` without underscores (CA1707 is enforced), and use `TheoryData<T>` with `MemberData` instead of `InlineData`, which boxes values.
 
 ## Commit & Pull Request Guidelines
 
