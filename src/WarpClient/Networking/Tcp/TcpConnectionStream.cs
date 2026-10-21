@@ -1,4 +1,4 @@
-namespace Warp.Networking;
+namespace Warp.Networking.Tcp;
 
 /// <summary>
 /// Presents a tunneled TCP connection as an asynchronous <see cref="Stream"/>.

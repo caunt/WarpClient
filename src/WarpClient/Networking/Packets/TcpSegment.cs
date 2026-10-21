@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace Warp.Networking;
+namespace Warp.Networking.Packets;
 
 internal readonly record struct TcpSegment(
     ushort SourcePort,
@@ -14,9 +14,15 @@ internal readonly record struct TcpSegment(
 )
 {
     public const int HeaderLength = 20;
+    public const int ChecksumOffset = 16;
     private const byte EndOfOptions = 0;
     private const byte NoOperation = 1;
     private const byte MaximumSegmentSizeOption = 2;
+    private const int MaximumSegmentSizeOptionLength = 4;
+
+    public int EncodedLength => EncodedHeaderLength + Payload.Length;
+
+    private int EncodedHeaderLength => HeaderLength + (MaximumSegmentSize > 0 ? MaximumSegmentSizeOptionLength : 0);
 
     public static bool TryParse(ReadOnlyMemory<byte> segment, out TcpSegment parsed)
     {
@@ -46,6 +52,29 @@ internal readonly record struct TcpSegment(
         return true;
     }
 
+    // Writes everything except the checksum, which depends on the IP pseudo-header and is filled in by the caller.
+    public void Write(Span<byte> destination)
+    {
+        int headerLength = EncodedHeaderLength;
+
+        BinaryPrimitives.WriteUInt16BigEndian(destination, SourcePort);
+        BinaryPrimitives.WriteUInt16BigEndian(destination[2..], DestinationPort);
+        BinaryPrimitives.WriteUInt32BigEndian(destination[4..], SequenceNumber);
+        BinaryPrimitives.WriteUInt32BigEndian(destination[8..], AcknowledgmentNumber);
+        destination[index: 12] = (byte)((headerLength / 4) << 4);
+        destination[index: 13] = (byte)ControlBits;
+        BinaryPrimitives.WriteUInt16BigEndian(destination[14..], Window);
+
+        if (MaximumSegmentSize > 0)
+        {
+            destination[index: 20] = MaximumSegmentSizeOption;
+            destination[index: 21] = MaximumSegmentSizeOptionLength;
+            BinaryPrimitives.WriteUInt16BigEndian(destination[22..], (ushort)MaximumSegmentSize);
+        }
+
+        Payload.Span.CopyTo(destination[headerLength..]);
+    }
+
     private static int ReadMaximumSegmentSize(ReadOnlySpan<byte> options)
     {
         int offset = 0;
@@ -69,7 +98,7 @@ internal readonly record struct TcpSegment(
 
             int length = options[offset + 1];
 
-            if (kind == MaximumSegmentSizeOption && length == 4 && offset + 4 <= options.Length)
+            if (kind == MaximumSegmentSizeOption && length == MaximumSegmentSizeOptionLength && offset + length <= options.Length)
                 return BinaryPrimitives.ReadUInt16BigEndian(options[(offset + 2)..]);
 
             offset += length;

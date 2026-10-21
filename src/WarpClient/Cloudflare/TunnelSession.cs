@@ -3,6 +3,7 @@ using System.Net;
 using Warp.Cloudflare.Registration;
 using Warp.Cloudflare.Tunnel;
 using Warp.Networking;
+using Warp.Networking.Dns;
 
 namespace Warp.Cloudflare;
 
@@ -32,7 +33,8 @@ internal sealed class TunnelSession : IAsyncDisposable
             .ConfigureAwait(continueOnCapturedContext: false);
 
         MasqueTunnel tunnel = await MasqueTunnel.OpenAsync(registration, options.Underlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        UserspaceNetworkStack stack = new(tunnel, IPAddress.Parse(registration.AddressIpv4));
+        IPAddress? localIpv6 = registration.AddressIpv6 is null ? null : IPAddress.Parse(registration.AddressIpv6);
+        UserspaceNetworkStack stack = new(tunnel, IPAddress.Parse(registration.AddressIpv4), localIpv6);
 
         tunnel.StartReceiving(stack);
 

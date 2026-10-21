@@ -1,4 +1,4 @@
-namespace Warp.Networking;
+namespace Warp.Networking.Packets;
 
 [Flags]
 internal enum TcpControlBits

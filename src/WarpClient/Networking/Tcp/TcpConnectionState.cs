@@ -1,4 +1,4 @@
-namespace Warp.Networking;
+namespace Warp.Networking.Tcp;
 
 internal enum TcpConnectionState
 {

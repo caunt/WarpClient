@@ -66,6 +66,26 @@ await using (stunConnection.ConfigureAwait(continueOnCapturedContext: false))
     Console.WriteLine($"UDP: {ReadMappedAddress(bindingResponse.AsSpan(start: 0, responseLength))}");
 }
 
+// Cloudflare's trace page reports the address a request came from and whether it arrived through WARP.
+DnsEndPoint traceEndPoint = new(host: "2606:4700:4700::1111", port: 443);
+Stream traceConnection = await tcpConnector.ConnectAsync(traceEndPoint, CancellationToken.None).ConfigureAwait(continueOnCapturedContext: false);
+SslStream traceStream = new(traceConnection);
+
+await using (traceStream.ConfigureAwait(continueOnCapturedContext: false))
+{
+    await traceStream.AuthenticateAsClientAsync(targetHost: "one.one.one.one").ConfigureAwait(continueOnCapturedContext: false);
+    await traceStream.WriteAsync("GET /cdn-cgi/trace HTTP/1.0\r\nHost: one.one.one.one\r\n\r\n"u8.ToArray()).ConfigureAwait(continueOnCapturedContext: false);
+
+    using StreamReader traceReader = new(traceStream, Encoding.ASCII);
+
+    string trace = await traceReader.ReadToEndAsync().ConfigureAwait(continueOnCapturedContext: false);
+    string[] traceLines = trace.Split(separator: '\n');
+    string traceAddress = traceLines.FirstOrDefault(static line => line.StartsWith(value: "ip=", StringComparison.Ordinal)) ?? "ip=?";
+    string traceWarp = traceLines.FirstOrDefault(static line => line.StartsWith(value: "warp=", StringComparison.Ordinal)) ?? "warp=?";
+
+    Console.WriteLine($"IPv6: {traceAddress[3..]} ({traceWarp})");
+}
+
 static IPAddress ReadMappedAddress(ReadOnlySpan<byte> message)
 {
     const ushort xorMappedAddress = 0x0020;

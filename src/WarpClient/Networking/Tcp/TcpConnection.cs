@@ -2,7 +2,9 @@ using System.Security.Cryptography;
 
 using Nito.AsyncEx;
 
-namespace Warp.Networking;
+using Warp.Networking.Packets;
+
+namespace Warp.Networking.Tcp;
 
 /// <summary>
 /// Client side of one TCP connection whose segments travel as IPv4 packets through a tunnel.

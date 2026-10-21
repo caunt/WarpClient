@@ -4,11 +4,10 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 
-namespace Warp.Networking;
+namespace Warp.Networking.Dns;
 
 internal static class DnsMessage
 {
-    private const ushort AddressRecordType = 1;
     private const byte CompressionMarker = 0xC0;
     private const int HeaderLength = 12;
     private const ushort InternetClass = 1;
@@ -17,7 +16,7 @@ internal static class DnsMessage
     private const ushort ResponseCodeMask = 0x000F;
     private const ushort ResponseFlag = 0x8000;
 
-    public static byte[] CreateQuery(ushort identifier, string hostName)
+    public static byte[] CreateQuery(ushort identifier, string hostName, DnsRecordType recordType)
     {
         string[] labels = new IdnMapping().GetAscii(hostName.TrimEnd(trimChar: '.')).Split(separator: '.');
         int nameLength = labels.Sum(static label => label.Length + 1) + 1;
@@ -37,13 +36,13 @@ internal static class DnsMessage
             offset += Encoding.ASCII.GetBytes(label, message.AsSpan(offset + 1)) + 1;
         }
 
-        BinaryPrimitives.WriteUInt16BigEndian(message.AsSpan(offset + 1), AddressRecordType);
+        BinaryPrimitives.WriteUInt16BigEndian(message.AsSpan(offset + 1), (ushort)recordType);
         BinaryPrimitives.WriteUInt16BigEndian(message.AsSpan(offset + 3), InternetClass);
 
         return message;
     }
 
-    public static bool TryReadFirstAddress(ReadOnlySpan<byte> message, ushort identifier, [NotNullWhen(returnValue: true)] out IPAddress? address)
+    public static bool TryReadFirstAddress(ReadOnlySpan<byte> message, ushort identifier, DnsRecordType recordType, [NotNullWhen(returnValue: true)] out IPAddress? address)
     {
         address = null;
 
@@ -57,6 +56,7 @@ internal static class DnsMessage
 
         int questions = BinaryPrimitives.ReadUInt16BigEndian(message[4..]);
         int answers = BinaryPrimitives.ReadUInt16BigEndian(message[6..]);
+        int addressLength = recordType == DnsRecordType.Ipv6Address ? 16 : 4;
         int offset = HeaderLength;
 
         for (int index = 0; index < questions; index++)
@@ -83,9 +83,9 @@ internal static class DnsMessage
             if (dataOffset + dataLength > message.Length)
                 return false;
 
-            if (type == AddressRecordType && dataLength == 4)
+            if (type == (ushort)recordType && dataLength == addressLength)
             {
-                address = new IPAddress(message.Slice(dataOffset, length: 4));
+                address = new IPAddress(message.Slice(dataOffset, addressLength));
 
                 return true;
             }

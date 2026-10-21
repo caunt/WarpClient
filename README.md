@@ -63,7 +63,7 @@ The research behind this — registration API, WireGuard and MASQUE transports, 
 
 ## Limitations
 
-- IPv4 destinations only; the tunnel's IPv6 address is not used yet.
+- Dual-stack inside the tunnel: IPv4 and IPv6 destinations, with A records preferred and AAAA used as a fallback.
 - HTTP/2 transport only. HTTP/3 needs QUIC datagrams, which .NET does not expose yet.
 - The TCP implementation favours simplicity: no congestion control, selective acknowledgments, or window scaling.
 - Free WARP accounts only; Zero Trust enrollment and WARP+ licenses are not supported yet.

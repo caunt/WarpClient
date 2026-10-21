@@ -6,17 +6,19 @@ using System.Security.Cryptography;
 
 using Nito.AsyncEx;
 
+using Warp.Networking.Packets;
+using Warp.Networking.Tcp;
+
 namespace Warp.Networking;
 
 /// <summary>
-/// Minimal IPv4 host that lives inside a packet tunnel: it owns one tunnel address, dispatches inbound packets to TCP
-/// connections and pending UDP exchanges, and turns their output back into packets.
+/// Minimal dual-stack host that lives inside a packet tunnel: it owns the tunnel's IPv4 and IPv6 addresses, dispatches
+/// inbound packets to TCP connections and UDP associations, and turns their output back into packets.
 /// </summary>
-internal sealed class UserspaceNetworkStack(IPacketTransmitter transmitter, IPAddress localAddress) : IPacketReceiver
+internal sealed class UserspaceNetworkStack(IPacketTransmitter transmitter, IPAddress localIpv4, IPAddress? localIpv6) : IPacketReceiver
 {
     private const int EphemeralPortCount = 16384;
     private const int FirstEphemeralPort = 49152;
-    private const int MaximumSegmentSize = MaximumTransmissionUnit - Ipv4Packet.HeaderLength - TcpSegment.HeaderLength;
     private const int MaximumTransmissionUnit = 1280;
     private const int UdpHeaderLength = 8;
 
@@ -27,12 +29,14 @@ internal sealed class UserspaceNetworkStack(IPacketTransmitter transmitter, IPAd
     private int _identification;
     private int _portCursor = RandomNumberGenerator.GetInt32(EphemeralPortCount);
 
+    public bool SupportsIpv6 => localIpv6 is not null;
+
     public async ValueTask<Stream> ConnectAsync(IPEndPoint remoteEndPoint, CancellationToken cancellationToken)
     {
-        if (remoteEndPoint.AddressFamily != AddressFamily.InterNetwork)
-            throw new NotSupportedException(message: "The tunnel stack only carries IPv4 connections.");
-
+        int maximumSegmentSize = MaximumTransmissionUnit - InternetPacket.GetHeaderLength(remoteEndPoint.AddressFamily) - TcpSegment.HeaderLength;
         TcpConnection connection;
+
+        ThrowIfUnsupported(remoteEndPoint.AddressFamily);
 
         using (await _mutex.LockAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false))
         {
@@ -40,7 +44,7 @@ internal sealed class UserspaceNetworkStack(IPacketTransmitter transmitter, IPAd
 
             ConnectionKey key = new(AllocatePort(), remoteEndPoint.Address, (ushort)remoteEndPoint.Port);
 
-            connection = new TcpConnection(this, key, MaximumSegmentSize);
+            connection = new TcpConnection(this, key, maximumSegmentSize);
             _connections = _connections.Add(key, connection);
         }
 
@@ -61,8 +65,7 @@ internal sealed class UserspaceNetworkStack(IPacketTransmitter transmitter, IPAd
 
     public async ValueTask<TunnelUdpConnection> ConnectDatagramAsync(IPEndPoint remoteEndPoint, CancellationToken cancellationToken)
     {
-        if (remoteEndPoint.AddressFamily != AddressFamily.InterNetwork)
-            throw new NotSupportedException(message: "The tunnel stack only carries IPv4 datagrams.");
+        ThrowIfUnsupported(remoteEndPoint.AddressFamily);
 
         using (await _mutex.LockAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false))
         {
@@ -79,14 +82,14 @@ internal sealed class UserspaceNetworkStack(IPacketTransmitter transmitter, IPAd
 
     public async ValueTask ReceiveAsync(ReadOnlyMemory<byte> packet, CancellationToken cancellationToken)
     {
-        if (!Ipv4Packet.TryParse(packet.Span, out Ipv4Datagram datagram) || !datagram.Destination.Equals(localAddress))
+        if (!InternetPacket.TryParse(packet.Span, out InternetDatagram datagram) || !IsLocal(datagram.Destination))
             return;
 
         ReadOnlyMemory<byte> payload = packet.Slice(datagram.PayloadOffset, datagram.PayloadLength);
 
-        if (datagram.Protocol == Ipv4Packet.TcpProtocol)
+        if (datagram.Protocol == InternetPacket.TcpProtocol)
             await ReceiveSegmentAsync(datagram.Source, payload, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        else if (datagram.Protocol == Ipv4Packet.UdpProtocol)
+        else if (datagram.Protocol == InternetPacket.UdpProtocol)
             await ReceiveDatagramAsync(datagram.Source, payload, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     }
 
@@ -104,14 +107,16 @@ internal sealed class UserspaceNetworkStack(IPacketTransmitter transmitter, IPAd
 
     public async ValueTask SendDatagramAsync(ushort localPort, IPEndPoint remoteEndPoint, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
     {
-        byte[] packet = Ipv4Packet.CreateUdp(localAddress, remoteEndPoint.Address, NextIdentification(), localPort, (ushort)remoteEndPoint.Port, payload.Span);
+        IPAddress source = GetLocalAddress(remoteEndPoint.AddressFamily);
+        byte[] packet = InternetPacket.CreateUdp(source, remoteEndPoint.Address, NextIdentification(), localPort, (ushort)remoteEndPoint.Port, payload.Span);
 
         await transmitter.TransmitAsync(packet, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     }
 
     public async ValueTask SendSegmentAsync(IPAddress remoteAddress, TcpSegment segment, CancellationToken cancellationToken)
     {
-        byte[] packet = Ipv4Packet.CreateTcp(localAddress, remoteAddress, NextIdentification(), segment);
+        IPAddress source = GetLocalAddress(remoteAddress.AddressFamily);
+        byte[] packet = InternetPacket.CreateTcp(source, remoteAddress, NextIdentification(), segment);
 
         await transmitter.TransmitAsync(packet, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     }
@@ -154,6 +159,18 @@ internal sealed class UserspaceNetworkStack(IPacketTransmitter transmitter, IPAd
         }
 
         throw new IOException(message: "The tunnel stack has no free local ports left.");
+    }
+
+    private IPAddress GetLocalAddress(AddressFamily family)
+    {
+        return family == AddressFamily.InterNetworkV6
+            ? localIpv6 ?? throw new NotSupportedException(message: "The tunnel has no IPv6 address.")
+            : localIpv4;
+    }
+
+    private bool IsLocal(IPAddress address)
+    {
+        return address.Equals(localIpv4) || (localIpv6 is not null && address.Equals(localIpv6));
     }
 
     private ushort NextIdentification()
@@ -224,5 +241,13 @@ internal sealed class UserspaceNetworkStack(IPacketTransmitter transmitter, IPAd
     {
         if (_failure is not null)
             throw new IOException(message: "The tunnel is closed.", _failure);
+    }
+
+    private void ThrowIfUnsupported(AddressFamily family)
+    {
+        bool supported = family == AddressFamily.InterNetwork || (family == AddressFamily.InterNetworkV6 && localIpv6 is not null);
+
+        if (!supported)
+            throw new NotSupportedException($"The tunnel does not carry {family} traffic.");
     }
 }

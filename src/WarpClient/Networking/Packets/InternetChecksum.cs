@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace Warp.Networking;
+namespace Warp.Networking.Packets;
 
 internal static class InternetChecksum
 {
