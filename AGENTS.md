@@ -6,7 +6,7 @@ This repository is a .NET 10 solution for a Cloudflare WARP client library.
 
 - `src/WarpClient/`: core library. Public API at the project root; `Cloudflare/Registration/` holds the device API, `Cloudflare/Tunnel/` MASQUE over HTTP/2, `Cloudflare/WireGuard/` WireGuard, `Cloudflare/Http3/` MASQUE proxy mode over HTTP/3, and `Networking/` the userspace IPv4/IPv6 stack (`Packets/`, `Tcp/`, `Dns/`).
 - `src/WarpClient.DependencyInjection/`: service registration and `IHttpClientFactory` integration.
-- `src/WarpClient.Playground/`: runs HTTP, TCP, UDP, and IPv6 checks through WARP (`--transport=http2|wireguard|http3` picks the transport, `--direct` uses the host's sockets instead).
+- `src/WarpClient.Playground/`: runs HTTP, TCP, UDP, and IPv6 checks through WARP (`--transport=http2|wireguard|http3` picks the transport, `--account` also prints the device account, `--direct` uses the host's sockets instead).
 - `tests/WarpClient.Tests/`: xUnit tests for protocol framing, packet formats, and loopback connector behaviour.
 - `reports/`, `research_notes/`: protocol research the implementation is based on.
 - `WarpClient.slnx`: solution entry point.

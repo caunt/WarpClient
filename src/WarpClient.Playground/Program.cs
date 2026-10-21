@@ -11,8 +11,8 @@ using System.Text;
 using Warp;
 
 // Every check talks only to ITcpConnector / IUdpConnector, so "--direct" swaps WARP for the host's own sockets and
-// "--transport=http2|wireguard|http3" picks how WARP carries them. Each step prints as it starts and fails on its own
-// timeout, so a stall always shows where it happened.
+// "--transport=http2|wireguard|http3" picks how WARP carries them; "--account" also prints the device's Cloudflare account.
+// Each step prints as it starts and fails on its own timeout, so a stall always shows where it happened.
 const string headerTerminator = "\r\n\r\n";
 const uint stunMagicCookie = 0x2112A442;
 TimeSpan stepTimeout = TimeSpan.FromSeconds(seconds: 30);
@@ -20,6 +20,7 @@ Uri publicAddressUri = new(uriString: "https://ifconfig.me/ip");
 DnsEndPoint stunServer = new(host: "stun.cloudflare.com", port: 3478);
 DnsEndPoint traceServer = new(host: "2606:4700:4700::1111", port: 443);
 bool direct = args.Contains(value: "--direct");
+bool showAccount = args.Contains(value: "--account");
 string transportName = args.FirstOrDefault(static argument => argument.StartsWith(value: "--transport=", StringComparison.Ordinal))?[12..] ?? "http2";
 
 WarpTransport transport = transportName switch
@@ -39,7 +40,7 @@ ITcpConnector tcpConnector = direct ? new DirectTcpConnector() : warpClient;
 IUdpConnector udpConnector = direct ? new DirectUdpConnector() : warpClient;
 int failures = 0;
 
-if (!direct)
+if (!direct && showAccount)
 {
     failures += await RunAsync(
         step: "Account",
@@ -50,7 +51,10 @@ if (!direct)
             return $"{account.AccountType}, role {account.Role}, WARP+ {(account.IsWarpPlus ? "on" : "off")}";
         }
     ).ConfigureAwait(continueOnCapturedContext: false);
+}
 
+if (!direct)
+{
     int tunnelFailure = await RunAsync(
         step: "Tunnel",
         async cancellationToken =>
