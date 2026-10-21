@@ -50,7 +50,7 @@ internal static class ResponseStatusDecoder
         return huffmanCoded ? DecodeHuffmanDigits(value) : int.Parse(value, CultureInfo.InvariantCulture);
     }
 
-    private static int DecodeHuffmanDigits(ReadOnlySpan<byte> value)
+    public static int DecodeHuffmanDigits(ReadOnlySpan<byte> value)
     {
         if (value.Length > sizeof(ulong))
             throw new InvalidDataException(message: "The response status is too long.");
@@ -93,7 +93,7 @@ internal static class ResponseStatusDecoder
         return digits == StatusDigits ? status : throw new InvalidDataException(message: "The response status is truncated.");
     }
 
-    private static int ReadInteger(ReadOnlySpan<byte> block, ref int offset, int prefixBits)
+    public static int ReadInteger(ReadOnlySpan<byte> block, ref int offset, int prefixBits)
     {
         int limit = (1 << prefixBits) - 1;
         int value = block[offset] & limit;

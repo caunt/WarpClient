@@ -13,8 +13,9 @@ namespace Warp;
 /// </summary>
 /// <remarks>
 /// The first use registers a free WARP device unless <see cref="WarpClientOptions.RegistrationPath"/> already holds one,
-/// which accepts Cloudflare's terms of service. Traffic travels through WARP's MASQUE tunnel over HTTP/2 on TCP port 443,
-/// carrying IPv4 and IPv6 packets; host names are resolved by 1.1.1.1 inside the tunnel.
+/// which accepts Cloudflare's terms of service. By default traffic travels through WARP's MASQUE tunnel over HTTP/2 on TCP
+/// port 443, carrying IPv4 and IPv6 packets, with host names resolved by 1.1.1.1 inside the tunnel;
+/// <see cref="WarpClientOptions.Transport"/> selects WireGuard or HTTP/3 proxy mode instead.
 /// </remarks>
 /// <remarks>
 /// Prepares a client that opens its tunnel on first use. Prefer <see cref="CreateAsync"/> to surface connection
@@ -26,7 +27,7 @@ public sealed class WarpClient(WarpClientOptions? options = null) : ITcpConnecto
     private readonly AsyncLock _mutex = new();
     private readonly WarpClientOptions _options = options ?? new WarpClientOptions();
     private bool _disposed;
-    private TunnelSession? _session;
+    private IWarpSession? _session;
 
     /// <summary>
     /// Registers the device if needed and opens the tunnel before returning, so failures surface here instead of on first use.
@@ -40,7 +41,7 @@ public sealed class WarpClient(WarpClientOptions? options = null) : ITcpConnecto
 
         try
         {
-            TunnelSession opened = await client.GetSessionAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+            IWarpSession opened = await client.GetSessionAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
             return opened.IsClosed ? throw new IOException(message: "The WARP tunnel closed right after opening.") : client;
         }
@@ -57,10 +58,19 @@ public sealed class WarpClient(WarpClientOptions? options = null) : ITcpConnecto
     {
         ArgumentNullException.ThrowIfNull(remoteEndPoint);
 
-        TunnelSession current = await GetSessionAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        IPAddress address = await current.ResolveAsync(remoteEndPoint.Host, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        IWarpSession current = await GetSessionAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
-        return await current.Stack.ConnectAsync(new IPEndPoint(address, remoteEndPoint.Port), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        try
+        {
+            return await current.ConnectTcpAsync(remoteEndPoint, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        }
+        catch (IOException) when (current.IsClosed)
+        {
+            // Cloudflare drops idle sessions; the connection is retried once on a fresh one.
+            IWarpSession fresh = await GetSessionAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+            return await fresh.ConnectTcpAsync(remoteEndPoint, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        }
     }
 
     /// <summary>
@@ -153,13 +163,21 @@ public sealed class WarpClient(WarpClientOptions? options = null) : ITcpConnecto
     {
         ArgumentNullException.ThrowIfNull(remoteEndPoint);
 
-        TunnelSession current = await GetSessionAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        IPAddress address = await current.ResolveAsync(remoteEndPoint.Host, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        IWarpSession current = await GetSessionAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
-        return await current.Stack.ConnectDatagramAsync(new IPEndPoint(address, remoteEndPoint.Port), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        try
+        {
+            return await current.ConnectUdpAsync(remoteEndPoint, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        }
+        catch (IOException) when (current.IsClosed)
+        {
+            IWarpSession fresh = await GetSessionAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+            return await fresh.ConnectUdpAsync(remoteEndPoint, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        }
     }
 
-    private async ValueTask<TunnelSession> GetSessionAsync(CancellationToken cancellationToken)
+    private async ValueTask<IWarpSession> GetSessionAsync(CancellationToken cancellationToken)
     {
         using (await _mutex.LockAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false))
         {
@@ -172,7 +190,7 @@ public sealed class WarpClient(WarpClientOptions? options = null) : ITcpConnecto
             if (_session is not null)
                 await _session.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
 
-            _session = await TunnelSession.OpenAsync(_options, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+            _session = await WarpSessionFactory.OpenAsync(_options, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
             return _session;
         }

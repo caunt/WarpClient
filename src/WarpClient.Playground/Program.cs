@@ -7,14 +7,24 @@ using System.Text;
 
 using Warp;
 
-// Every check below talks only to ITcpConnector / IUdpConnector, so "--direct" swaps WARP for the host's own sockets.
+// Every check below talks only to ITcpConnector / IUdpConnector, so "--direct" swaps WARP for the host's own sockets and
+// "--transport=http2|wireguard|http3" picks how WARP carries them.
 const string headerTerminator = "\r\n\r\n";
 const uint stunMagicCookie = 0x2112A442;
 Uri publicAddressUri = new(uriString: "https://ifconfig.me/ip");
 DnsEndPoint stunServer = new(host: "stun.cloudflare.com", port: 3478);
 bool direct = args.Contains(value: "--direct");
 
-WarpClient warpClient = new();
+string transportName = args.FirstOrDefault(static argument => argument.StartsWith(value: "--transport=", StringComparison.Ordinal))?[12..] ?? "http2";
+
+WarpTransport transport = transportName switch
+{
+    "wireguard" => WarpTransport.WireGuard,
+    "http3" => WarpTransport.MasqueHttp3,
+    _ => WarpTransport.MasqueHttp2,
+};
+
+WarpClient warpClient = new(new WarpClientOptions { Transport = transport });
 
 await using ConfiguredAsyncDisposable warpClientDisposal = warpClient.ConfigureAwait(continueOnCapturedContext: false);
 

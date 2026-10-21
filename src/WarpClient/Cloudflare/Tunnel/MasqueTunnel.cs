@@ -102,6 +102,19 @@ internal sealed class MasqueTunnel : IPacketTunnel
         throw new IOException(message: "None of Cloudflare's MASQUE endpoints accepted the tunnel.", new AggregateException(failures));
     }
 
+    public static byte[] ReadServerKey(string publicKey)
+    {
+        using ECDsa key = ECDsa.Create();
+
+        // Enrollment normally returns PEM, but some responses carry the bare base64 SubjectPublicKeyInfo.
+        if (publicKey.Contains(value: "-----BEGIN", StringComparison.Ordinal))
+            key.ImportFromPem(publicKey);
+        else
+            key.ImportSubjectPublicKeyInfo(Convert.FromBase64String(publicKey), out _);
+
+        return key.ExportSubjectPublicKeyInfo();
+    }
+
     public async ValueTask DisposeAsync()
     {
         _closed = true;
@@ -175,19 +188,6 @@ internal sealed class MasqueTunnel : IPacketTunnel
         }
 
         return initialWindowSize;
-    }
-
-    private static byte[] ReadServerKey(string publicKey)
-    {
-        using ECDsa key = ECDsa.Create();
-
-        // Enrollment normally returns PEM, but some responses carry the bare base64 SubjectPublicKeyInfo.
-        if (publicKey.Contains(value: "-----BEGIN", StringComparison.Ordinal))
-            key.ImportFromPem(publicKey);
-        else
-            key.ImportSubjectPublicKeyInfo(Convert.FromBase64String(publicKey), out _);
-
-        return key.ExportSubjectPublicKeyInfo();
     }
 
     private async ValueTask AnswerPingAsync(Http2FrameHeader frame, CancellationToken cancellationToken)

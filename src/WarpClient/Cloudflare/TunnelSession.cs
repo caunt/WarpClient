@@ -9,30 +9,25 @@ using Warp.Networking.Dns;
 namespace Warp.Cloudflare;
 
 /// <summary>
-/// One open MASQUE tunnel together with the network stack and resolver that live inside it.
+/// One open layer-3 tunnel (MASQUE over HTTP/2 or WireGuard) together with the network stack and resolver inside it.
 /// </summary>
-internal sealed class TunnelSession : IAsyncDisposable
+internal sealed class TunnelSession : IWarpSession
 {
+    private readonly TunnelDnsResolver _resolver;
+    private readonly UserspaceNetworkStack _stack;
     private readonly IPacketTunnel _tunnel;
 
     private TunnelSession(IPacketTunnel tunnel, UserspaceNetworkStack stack)
     {
-        this._tunnel = tunnel;
-        Stack = stack;
-        Resolver = new TunnelDnsResolver(stack);
+        _tunnel = tunnel;
+        _stack = stack;
+        _resolver = new TunnelDnsResolver(stack);
     }
 
     public bool IsClosed => _tunnel.IsClosed;
 
-    public TunnelDnsResolver Resolver { get; }
-
-    public UserspaceNetworkStack Stack { get; }
-
-    public static async ValueTask<TunnelSession> OpenAsync(WarpClientOptions options, CancellationToken cancellationToken)
+    public static async ValueTask<TunnelSession> OpenAsync(DeviceRegistration registration, WarpClientOptions options, CancellationToken cancellationToken)
     {
-        DeviceRegistration registration = await DeviceRegistrationStore.LoadOrRegisterAsync(options, cancellationToken)
-            .ConfigureAwait(continueOnCapturedContext: false);
-
         IPacketTunnel tunnel = options.Transport == WarpTransport.WireGuard
             ? await WireGuardTunnel.OpenAsync(registration, options.UdpUnderlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false)
             : await MasqueTunnel.OpenAsync(registration, options.Underlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
@@ -45,15 +40,29 @@ internal sealed class TunnelSession : IAsyncDisposable
         return new TunnelSession(tunnel, stack);
     }
 
+    public async ValueTask<Stream> ConnectTcpAsync(DnsEndPoint remoteEndPoint, CancellationToken cancellationToken)
+    {
+        IPAddress address = await ResolveAsync(remoteEndPoint.Host, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+        return await _stack.ConnectAsync(new IPEndPoint(address, remoteEndPoint.Port), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    }
+
+    public async ValueTask<IUdpConnection> ConnectUdpAsync(DnsEndPoint remoteEndPoint, CancellationToken cancellationToken)
+    {
+        IPAddress address = await ResolveAsync(remoteEndPoint.Host, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+        return await _stack.ConnectDatagramAsync(new IPEndPoint(address, remoteEndPoint.Port), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    }
+
     public ValueTask DisposeAsync()
     {
         return _tunnel.DisposeAsync();
     }
 
-    public async ValueTask<IPAddress> ResolveAsync(string host, CancellationToken cancellationToken)
+    private async ValueTask<IPAddress> ResolveAsync(string host, CancellationToken cancellationToken)
     {
         return IPAddress.TryParse(host, out IPAddress? address)
             ? address
-            : await Resolver.ResolveAsync(host, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+            : await _resolver.ResolveAsync(host, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     }
 }
