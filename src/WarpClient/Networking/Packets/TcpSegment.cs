@@ -10,19 +10,25 @@ internal readonly record struct TcpSegment(
     TcpControlBits ControlBits,
     ushort Window,
     int MaximumSegmentSize,
-    ReadOnlyMemory<byte> Payload
+    ReadOnlyMemory<byte> Payload,
+    int WindowScale = TcpSegment.AbsentWindowScale
 )
 {
     public const int HeaderLength = 20;
     public const int ChecksumOffset = 16;
+    public const int AbsentWindowScale = -1;
+    public const byte MaximumWindowScale = 14;
     private const byte EndOfOptions = 0;
     private const byte NoOperation = 1;
     private const byte MaximumSegmentSizeOption = 2;
     private const int MaximumSegmentSizeOptionLength = 4;
+    private const byte WindowScaleOption = 3;
+    private const int WindowScaleOptionLength = 3;
 
     public int EncodedLength => EncodedHeaderLength + Payload.Length;
 
-    private int EncodedHeaderLength => HeaderLength + (MaximumSegmentSize > 0 ? MaximumSegmentSizeOptionLength : 0);
+    // The window scale option is padded with a leading no-operation so the header stays a multiple of four bytes.
+    private int EncodedHeaderLength => HeaderLength + (MaximumSegmentSize > 0 ? MaximumSegmentSizeOptionLength : 0) + (WindowScale >= 0 ? WindowScaleOptionLength + 1 : 0);
 
     public static bool TryParse(ReadOnlyMemory<byte> segment, out TcpSegment parsed)
     {
@@ -38,6 +44,8 @@ internal readonly record struct TcpSegment(
         if (headerLength < HeaderLength || headerLength > span.Length)
             return false;
 
+        ReadOptions(span[HeaderLength..headerLength], out int maximumSegmentSize, out int windowScale);
+
         parsed = new TcpSegment(
             BinaryPrimitives.ReadUInt16BigEndian(span),
             BinaryPrimitives.ReadUInt16BigEndian(span[2..]),
@@ -45,8 +53,9 @@ internal readonly record struct TcpSegment(
             BinaryPrimitives.ReadUInt32BigEndian(span[8..]),
             (TcpControlBits)(span[index: 13] & 0x3F),
             BinaryPrimitives.ReadUInt16BigEndian(span[14..]),
-            ReadMaximumSegmentSize(span[HeaderLength..headerLength]),
-            segment[headerLength..]
+            maximumSegmentSize,
+            segment[headerLength..],
+            windowScale
         );
 
         return true;
@@ -65,18 +74,32 @@ internal readonly record struct TcpSegment(
         destination[index: 13] = (byte)ControlBits;
         BinaryPrimitives.WriteUInt16BigEndian(destination[14..], Window);
 
+        int offset = HeaderLength;
+
         if (MaximumSegmentSize > 0)
         {
-            destination[index: 20] = MaximumSegmentSizeOption;
-            destination[index: 21] = MaximumSegmentSizeOptionLength;
-            BinaryPrimitives.WriteUInt16BigEndian(destination[22..], (ushort)MaximumSegmentSize);
+            destination[offset] = MaximumSegmentSizeOption;
+            destination[offset + 1] = MaximumSegmentSizeOptionLength;
+            BinaryPrimitives.WriteUInt16BigEndian(destination[(offset + 2)..], (ushort)MaximumSegmentSize);
+            offset += MaximumSegmentSizeOptionLength;
+        }
+
+        if (WindowScale >= 0)
+        {
+            destination[offset] = NoOperation;
+            destination[offset + 1] = WindowScaleOption;
+            destination[offset + 2] = WindowScaleOptionLength;
+            destination[offset + 3] = (byte)Math.Min(WindowScale, MaximumWindowScale);
         }
 
         Payload.Span.CopyTo(destination[headerLength..]);
     }
 
-    private static int ReadMaximumSegmentSize(ReadOnlySpan<byte> options)
+    private static void ReadOptions(ReadOnlySpan<byte> options, out int maximumSegmentSize, out int windowScale)
     {
+        maximumSegmentSize = 0;
+        windowScale = AbsentWindowScale;
+
         int offset = 0;
 
         while (offset < options.Length)
@@ -84,7 +107,7 @@ internal readonly record struct TcpSegment(
             byte kind = options[offset];
 
             if (kind == EndOfOptions)
-                return 0;
+                return;
 
             if (kind == NoOperation)
             {
@@ -94,16 +117,17 @@ internal readonly record struct TcpSegment(
             }
 
             if (offset + 1 >= options.Length || options[offset + 1] < 2)
-                return 0;
+                return;
 
             int length = options[offset + 1];
+            bool complete = offset + length <= options.Length;
 
-            if (kind == MaximumSegmentSizeOption && length == MaximumSegmentSizeOptionLength && offset + length <= options.Length)
-                return BinaryPrimitives.ReadUInt16BigEndian(options[(offset + 2)..]);
+            if (kind == MaximumSegmentSizeOption && length == MaximumSegmentSizeOptionLength && complete)
+                maximumSegmentSize = BinaryPrimitives.ReadUInt16BigEndian(options[(offset + 2)..]);
+            else if (kind == WindowScaleOption && length == WindowScaleOptionLength && complete)
+                windowScale = Math.Min(options[offset + 2], MaximumWindowScale);
 
             offset += length;
         }
-
-        return 0;
     }
 }

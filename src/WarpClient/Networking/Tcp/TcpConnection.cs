@@ -10,17 +10,24 @@ namespace Warp.Networking.Tcp;
 /// Client side of one TCP connection whose segments travel as IPv4 packets through a tunnel.
 /// </summary>
 /// <remarks>
-/// Deliberately small: no congestion control, selective acknowledgments or window scaling. Lost segments are recovered by
-/// go-back-N retransmission with exponential backoff, which is enough for a reliable, low-loss tunnel.
+/// Deliberately small: no congestion control or selective acknowledgments. Incoming segments past a gap are held until it is
+/// filled, three duplicate acknowledgments resend the first unacknowledged segment, and the retransmission timeout follows
+/// the measured round trip. Anything still lost after a timeout is recovered by go-back-N retransmission with exponential
+/// backoff, which is enough for a reliable, low-loss tunnel.
 /// </remarks>
 internal sealed class TcpConnection
 {
     private const int DefaultMaximumSegmentSize = 536;
-    private const int MaximumBytesInFlight = 64 * 1024;
-    private const int MaximumRetransmissions = 7;
-    private const int ReceiveCapacity = 256 * 1024;
+    private const int DelayedAcknowledgmentSegments = 2;
+    private const int DuplicateAcknowledgmentThreshold = 3;
+    private const int MaximumBytesInFlight = 256 * 1024;
+    private const int MaximumRetransmissions = 9;
+    private const int ReceiveCapacity = 512 * 1024;
+    private const int ReceiveWindowShift = 4;
     private const int SendCapacity = 256 * 1024;
+    private static readonly TimeSpan AcknowledgmentDelay = TimeSpan.FromMilliseconds(milliseconds: 40);
     private static readonly TimeSpan InitialRetransmissionTimeout = TimeSpan.FromSeconds(seconds: 1);
+    private static readonly TimeSpan MinimumRetransmissionTimeout = TimeSpan.FromMilliseconds(milliseconds: 200);
     private static readonly TimeSpan MaximumRetransmissionTimeout = TimeSpan.FromSeconds(seconds: 30);
     private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(seconds: 5);
     private static readonly TimeSpan TimerInterval = TimeSpan.FromMilliseconds(milliseconds: 100);
@@ -30,28 +37,40 @@ internal sealed class TcpConnection
     private readonly AsyncLock _mutex = new();
     private readonly ByteQueue _sendBuffer = new();
     private readonly ByteQueue _receiveBuffer = new();
+    private readonly OutOfOrderSegments _outOfOrderSegments = new();
     private readonly UserspaceNetworkStack _stack;
+    private long _acknowledgmentDeadline;
     private int _advertisedWindow;
+    private TcpConnectionState _state = TcpConnectionState.Closed;
     private long _closeDeadline;
     private volatile bool _closeRequested;
+    private int _duplicateAcknowledgments;
     private Exception? _failure;
     private bool _finishAcknowledged;
     private bool _finishAssigned;
     private bool _finishQueued;
     private bool _finishSent;
     private uint _finishSequence;
-    private TcpConnectionState _state = TcpConnectionState.Closed;
+    private TimeSpan _baseRetransmissionTimeout = InitialRetransmissionTimeout;
     private int _peerWindow;
+    private int _peerWindowShift;
     private bool _receiveCompleted;
     private uint _receiveNext;
+    private int _receiveWindowShift;
     private long _retransmissionDeadline;
     private int _peerMaximumSegmentSize = DefaultMaximumSegmentSize;
     private int _retransmissions;
+    private double _roundTripVariation;
     private uint _sendHighest;
     private uint _sendNext;
     private uint _sendUnacknowledged;
+    private double _smoothedRoundTrip;
     private TimeSpan _retransmissionTimeout = InitialRetransmissionTimeout;
+    private long _timedAt;
+    private uint _timedSequence;
     private Task _timer = Task.CompletedTask;
+    private bool _timing;
+    private int _unacknowledgedSegments;
 
     public TcpConnection(UserspaceNetworkStack stack, ConnectionKey key, int localMaximumSegmentSize)
     {
@@ -85,6 +104,7 @@ internal sealed class TcpConnection
             _sendUnacknowledged = initialSequence;
             _sendNext = initialSequence + 1;
             _sendHighest = _sendNext;
+            _timedAt = Environment.TickCount64;
             await SendSegmentAsync(initialSequence, TcpControlBits.Synchronize, ReadOnlyMemory<byte>.Empty, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
             ArmRetransmission();
             _timer = RunTimerAsync();
@@ -131,6 +151,7 @@ internal sealed class TcpConnection
             {
                 int read = _receiveBuffer.Dequeue(destination.Span);
 
+                _receiveNext = _outOfOrderSegments.Drain(_receiveBuffer, _receiveNext, ReceiveCapacity);
                 await AnnounceReopenedWindowAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
                 return read;
@@ -176,6 +197,21 @@ internal sealed class TcpConnection
         return (int)(first - second) < 0;
     }
 
+    private async ValueTask AcknowledgeAsync(bool immediately, CancellationToken cancellationToken)
+    {
+        _unacknowledgedSegments++;
+
+        if (immediately || _unacknowledgedSegments >= DelayedAcknowledgmentSegments)
+        {
+            await SendSegmentAsync(_sendNext, TcpControlBits.Acknowledgment, ReadOnlyMemory<byte>.Empty, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+            return;
+        }
+
+        if (_acknowledgmentDeadline == 0)
+            _acknowledgmentDeadline = Environment.TickCount64 + (long)AcknowledgmentDelay.TotalMilliseconds;
+    }
+
     private void AcknowledgeFinish()
     {
         _finishAcknowledged = true;
@@ -193,7 +229,17 @@ internal sealed class TcpConnection
         if (_retransmissionDeadline == 0)
             ArmRetransmission();
 
-        _sendNext += (uint)length;
+        uint end = _sendNext + (uint)length;
+
+        // Only data sent for the first time is timed, since an acknowledgment of a retransmission is ambiguous.
+        if (!_timing && IsBefore(_sendHighest, end))
+        {
+            _timedAt = Environment.TickCount64;
+            _timedSequence = end;
+            _timing = true;
+        }
+
+        _sendNext = end;
 
         if (IsBefore(_sendHighest, _sendNext))
             _sendHighest = _sendNext;
@@ -201,7 +247,7 @@ internal sealed class TcpConnection
 
     private async ValueTask AnnounceReopenedWindowAsync(CancellationToken cancellationToken)
     {
-        int window = Math.Min(ushort.MaxValue, ReceiveCapacity - _receiveBuffer.Count);
+        int window = GetReceiveWindow();
         bool reopened = window - _advertisedWindow >= _peerMaximumSegmentSize * 2;
         bool synchronized = _state is TcpConnectionState.Established or TcpConnectionState.FinishWait1 or TcpConnectionState.FinishWait2;
 
@@ -251,6 +297,11 @@ internal sealed class TcpConnection
         _changed.NotifyAll();
     }
 
+    private int GetReceiveWindow()
+    {
+        return Math.Min(ReceiveCapacity - _receiveBuffer.Count, ushort.MaxValue << _receiveWindowShift);
+    }
+
     private async ValueTask HandleHandshakeAsync(TcpSegment segment, CancellationToken cancellationToken)
     {
         bool acknowledgesSynchronize = (segment.ControlBits & TcpControlBits.Acknowledgment) != 0 && segment.AcknowledgmentNumber == _sendNext;
@@ -274,7 +325,17 @@ internal sealed class TcpConnection
         _sendUnacknowledged = segment.AcknowledgmentNumber;
         _peerWindow = segment.Window;
         _peerMaximumSegmentSize = sizeAnnounced ? Math.Min(segment.MaximumSegmentSize, _localMaximumSegmentSize) : DefaultMaximumSegmentSize;
+
+        // Window scaling is only in effect when both ends offered it on their SYN.
+        bool scaling = segment.WindowScale != TcpSegment.AbsentWindowScale;
+
+        _peerWindowShift = scaling ? segment.WindowScale : 0;
+        _receiveWindowShift = scaling ? ReceiveWindowShift : 0;
         _state = TcpConnectionState.Established;
+
+        if (_retransmissions == 0)
+            MeasureRoundTrip(Environment.TickCount64 - _timedAt);
+
         ResetRetransmission();
         await SendSegmentAsync(_sendNext, TcpControlBits.Acknowledgment, ReadOnlyMemory<byte>.Empty, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         _changed.NotifyAll();
@@ -282,26 +343,68 @@ internal sealed class TcpConnection
 
     private async ValueTask HandleSynchronizedAsync(TcpSegment segment, CancellationToken cancellationToken)
     {
-        if ((segment.ControlBits & TcpControlBits.Acknowledgment) != 0)
-            ProcessAcknowledgment(segment);
+        bool resendFirst = (segment.ControlBits & TcpControlBits.Acknowledgment) != 0 && ProcessAcknowledgment(segment);
 
-        if (ReceivePayload(segment))
-            await SendSegmentAsync(_sendNext, TcpControlBits.Acknowledgment, ReadOnlyMemory<byte>.Empty, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        if (ReceivePayload(segment, out bool acknowledgeNow))
+            await AcknowledgeAsync(acknowledgeNow, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+        if (resendFirst)
+            await ResendFirstSegmentAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
         await TransmitPendingAsync(probing: false, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         _changed.NotifyAll();
     }
 
-    private void ProcessAcknowledgment(TcpSegment segment)
+    private void HoldOutOfOrder(TcpSegment segment)
+    {
+        int gap = (int)(segment.SequenceNumber - _receiveNext);
+        int length = segment.Payload.Length;
+        bool fitsWindow = gap > 0 && length > 0 && gap + length <= ReceiveCapacity - _receiveBuffer.Count;
+
+        // A FIN past a gap is not kept: the peer repeats it once the missing data has been acknowledged.
+        if (fitsWindow && _outOfOrderSegments.BufferedBytes + length <= ReceiveCapacity)
+            _outOfOrderSegments.Add(segment.SequenceNumber, segment.Payload.Span);
+    }
+
+    private void MeasureRoundTrip(long elapsedMilliseconds)
+    {
+        double sample = Math.Max(elapsedMilliseconds, val2: 1);
+
+        if (_smoothedRoundTrip == 0)
+        {
+            _smoothedRoundTrip = sample;
+            _roundTripVariation = sample / 2;
+        }
+        else
+        {
+            _roundTripVariation = (0.75 * _roundTripVariation) + (0.25 * Math.Abs(_smoothedRoundTrip - sample));
+            _smoothedRoundTrip = (0.875 * _smoothedRoundTrip) + (0.125 * sample);
+        }
+
+        double timeout = _smoothedRoundTrip + Math.Max(TimerInterval.TotalMilliseconds, 4 * _roundTripVariation);
+
+        _baseRetransmissionTimeout = TimeSpan.FromMilliseconds(Math.Clamp(timeout, MinimumRetransmissionTimeout.TotalMilliseconds, MaximumRetransmissionTimeout.TotalMilliseconds));
+    }
+
+    private bool ProcessAcknowledgment(TcpSegment segment)
     {
         uint acknowledgment = segment.AcknowledgmentNumber;
+        int window = segment.Window << _peerWindowShift;
         bool advances = IsBefore(_sendUnacknowledged, acknowledgment) && !IsBefore(_sendHighest, acknowledgment);
+        bool resendFirst = false;
 
         if (advances)
         {
             bool coversFinish = _finishAssigned && !_finishAcknowledged && IsBefore(_finishSequence, acknowledgment);
             int acknowledgedLength = (int)(acknowledgment - _sendUnacknowledged) - (coversFinish ? 1 : 0);
 
+            if (_timing && !IsBefore(acknowledgment, _timedSequence))
+            {
+                MeasureRoundTrip(Environment.TickCount64 - _timedAt);
+                _timing = false;
+            }
+
+            _duplicateAcknowledgments = 0;
             _sendBuffer.Discard(Math.Min(acknowledgedLength, _sendBuffer.Count));
             _sendUnacknowledged = acknowledgment;
 
@@ -313,14 +416,31 @@ internal sealed class TcpConnection
 
             ResetRetransmission();
         }
+        else
+        {
+            // Only a bare acknowledgment that repeats the previous one and opens no window signals a hole in the peer's stream.
+            bool bare = segment.Payload.IsEmpty && (segment.ControlBits & (TcpControlBits.Synchronize | TcpControlBits.Finish)) == 0;
+            bool duplicate = bare && acknowledgment == _sendUnacknowledged && _sendUnacknowledged != _sendHighest && window == _peerWindow;
+
+            if (duplicate)
+            {
+                _duplicateAcknowledgments++;
+                resendFirst = _duplicateAcknowledgments == DuplicateAcknowledgmentThreshold;
+            }
+        }
 
         if (acknowledgment == _sendUnacknowledged)
-            _peerWindow = segment.Window;
+            _peerWindow = window;
+
+        return resendFirst;
     }
 
-    private bool ReceivePayload(TcpSegment segment)
+    private bool ReceivePayload(TcpSegment segment, out bool acknowledgeNow)
     {
         bool finishing = (segment.ControlBits & TcpControlBits.Finish) != 0;
+
+        // Duplicates, gaps and the end of the stream are answered at once so the peer can react to them.
+        acknowledgeNow = true;
 
         if (segment.Payload.IsEmpty && !finishing)
             return false;
@@ -331,11 +451,19 @@ internal sealed class TcpConnection
 
         int alreadyReceived = (int)(_receiveNext - segment.SequenceNumber);
 
-        if (alreadyReceived < 0 || alreadyReceived > segment.Payload.Length)
+        if (alreadyReceived < 0)
+        {
+            HoldOutOfOrder(segment);
+
+            return true;
+        }
+
+        if (alreadyReceived > segment.Payload.Length)
             return true;
 
         int fresh = segment.Payload.Length - alreadyReceived;
         int accepted = Math.Min(fresh, ReceiveCapacity - _receiveBuffer.Count);
+        bool fillsGap = _outOfOrderSegments.BufferedBytes > 0;
 
         _receiveBuffer.Enqueue(segment.Payload.Span.Slice(alreadyReceived, accepted));
         _receiveNext += (uint)accepted;
@@ -352,14 +480,37 @@ internal sealed class TcpConnection
                 _ => _state,
             };
         }
+        else
+        {
+            _receiveNext = _outOfOrderSegments.Drain(_receiveBuffer, _receiveNext, ReceiveCapacity);
+        }
+
+        bool pushed = (segment.ControlBits & TcpControlBits.Push) != 0;
+        bool full = segment.Payload.Length >= _peerMaximumSegmentSize;
+
+        acknowledgeNow = finishing || pushed || !full || fillsGap || accepted < fresh;
 
         return true;
+    }
+
+    private async ValueTask ResendFirstSegmentAsync(CancellationToken cancellationToken)
+    {
+        int length = Math.Min(Math.Min(_sendBuffer.Count, _peerMaximumSegmentSize), (int)(_sendHighest - _sendUnacknowledged));
+
+        if (length <= 0)
+            return;
+
+        byte[] payload = new byte[length];
+
+        _timing = false;
+        _sendBuffer.CopyTo(offset: 0, payload);
+        await SendSegmentAsync(_sendUnacknowledged, TcpControlBits.Acknowledgment | TcpControlBits.Push, payload, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     }
 
     private void ResetRetransmission()
     {
         _retransmissions = 0;
-        _retransmissionTimeout = InitialRetransmissionTimeout;
+        _retransmissionTimeout = _baseRetransmissionTimeout;
         _retransmissionDeadline = 0;
 
         if (_sendUnacknowledged != _sendHighest)
@@ -369,6 +520,7 @@ internal sealed class TcpConnection
     private async ValueTask RetransmitAsync(long now)
     {
         _retransmissions++;
+        _timing = false;
 
         if (_retransmissions > MaximumRetransmissions)
         {
@@ -439,7 +591,16 @@ internal sealed class TcpConnection
         bool synchronizing = (controlBits & TcpControlBits.Synchronize) != 0;
         bool acknowledging = (controlBits & TcpControlBits.Acknowledgment) != 0;
 
-        _advertisedWindow = Math.Min(ushort.MaxValue, ReceiveCapacity - _receiveBuffer.Count);
+        // The window in a SYN is never scaled.
+        int shift = synchronizing ? 0 : _receiveWindowShift;
+
+        _advertisedWindow = GetReceiveWindow() >> shift << shift;
+
+        if (acknowledging)
+        {
+            _acknowledgmentDeadline = 0;
+            _unacknowledgedSegments = 0;
+        }
 
         TcpSegment segment = new(
             Key.LocalPort,
@@ -447,9 +608,10 @@ internal sealed class TcpConnection
             sequenceNumber,
             acknowledging ? _receiveNext : 0,
             controlBits,
-            (ushort)_advertisedWindow,
+            (ushort)(_advertisedWindow >> shift),
             synchronizing ? _localMaximumSegmentSize : 0,
-            payload
+            payload,
+            synchronizing ? ReceiveWindowShift : TcpSegment.AbsentWindowScale
         );
 
         await _stack.SendSegmentAsync(Key.RemoteAddress, segment, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
@@ -463,6 +625,9 @@ internal sealed class TcpConnection
                 return false;
 
             long now = Environment.TickCount64;
+
+            if (_acknowledgmentDeadline != 0 && now >= _acknowledgmentDeadline)
+                await SendSegmentAsync(_sendNext, TcpControlBits.Acknowledgment, ReadOnlyMemory<byte>.Empty, CancellationToken.None).ConfigureAwait(continueOnCapturedContext: false);
 
             if (_closeRequested && !await ContinueClosingAsync(now).ConfigureAwait(continueOnCapturedContext: false))
                 return false;
