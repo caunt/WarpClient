@@ -23,7 +23,7 @@ internal static class WarpSessionFactory
 
             return options.Transport != WarpTransport.MasqueHttp3Proxy
                 ? await TunnelSession.OpenAsync(registration, options, timeout.Token).ConfigureAwait(continueOnCapturedContext: false)
-                : await Http3ProxySession.OpenAsync(registration, options.UdpUnderlay, timeout.Token).ConfigureAwait(continueOnCapturedContext: false);
+                : await Http3ProxySession.OpenAsync(registration, options.UdpUnderlay, options.FallbackEndpoints, timeout.Token).ConfigureAwait(continueOnCapturedContext: false);
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {

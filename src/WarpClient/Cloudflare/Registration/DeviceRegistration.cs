@@ -31,4 +31,12 @@ internal sealed record DeviceRegistration(
     public const string WireGuardTunnelType = "wireguard";
 
     public bool IsWireGuard => TunnelType == WireGuardTunnelType;
+
+    /// <summary>
+    /// Lists the MASQUE endpoints to try in order: the registered IPv4 and IPv6 addresses, then the caller's fallbacks.
+    /// </summary>
+    public string[] GetMasqueEndpoints(IEnumerable<string> fallbackEndpoints)
+    {
+        return [.. new[] { EndpointIpv4, EndpointIpv6 }.Concat(fallbackEndpoints).Where(static endpoint => !string.IsNullOrWhiteSpace(endpoint)).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase)];
+    }
 }

@@ -41,6 +41,7 @@ internal sealed class MasqueHttp3Connection : IAsyncDisposable
     public static async ValueTask<MasqueHttp3Connection> OpenAsync(
         DeviceRegistration registration,
         IUdpConnector underlay,
+        IEnumerable<string> fallbackEndpoints,
         string serverName,
         byte[] settings,
         bool datagrams,
@@ -58,10 +59,9 @@ internal sealed class MasqueHttp3Connection : IAsyncDisposable
             StreamErrorCode = RequestCancelled,
         };
 
-        string?[] endpoints = [registration.EndpointIpv4, registration.EndpointIpv6];
         List<Exception> failures = [];
 
-        foreach (string endpoint in endpoints.OfType<string>())
+        foreach (string endpoint in registration.GetMasqueEndpoints(fallbackEndpoints))
         {
             try
             {

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -47,7 +48,7 @@ public sealed class MasqueTunnelTests
         IOException exception = await Assert.ThrowsAsync<IOException>(
             async () =>
             {
-                MasqueTunnel tunnel = await MasqueTunnel.OpenAsync(registration, underlay, cancellation.Token).ConfigureAwait(continueOnCapturedContext: true);
+                MasqueTunnel tunnel = await MasqueTunnel.OpenAsync(registration, underlay, [], cancellation.Token).ConfigureAwait(continueOnCapturedContext: true);
 
                 await tunnel.DisposeAsync().ConfigureAwait(continueOnCapturedContext: true);
             }
@@ -59,6 +60,47 @@ public sealed class MasqueTunnelTests
 
         await cancellation.CancelAsync().ConfigureAwait(continueOnCapturedContext: true);
         await closing.ConfigureAwait(continueOnCapturedContext: true);
+    }
+
+    /// <summary>
+    /// When the registered endpoint is unreachable, the tunnel opens through the configured fallback endpoint instead of failing.
+    /// </summary>
+    /// <returns>A task that completes when the fallback has been verified.</returns>
+    [Fact]
+    public async Task FallbackEndpointCarriesTunnelWhenRegisteredEndpointIsUnreachable()
+    {
+        using CancellationTokenSource cancellation = new(Timeout);
+
+        using ECDsa deviceKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+
+        using ECDsa serverKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+
+        LoopbackMasqueServer server = new(serverKey);
+
+        try
+        {
+            DeviceRegistration registration = new(
+                DeviceId: "loopback",
+                AccessToken: "unused",
+                Convert.ToBase64String(deviceKey.ExportPkcs8PrivateKey()),
+                serverKey.ExportSubjectPublicKeyInfoPem(),
+                EndpointIpv4: "192.0.2.1",
+                EndpointIpv6: null,
+                AddressIpv4: "172.16.0.2",
+                AddressIpv6: null
+            );
+
+            UnreachableFirstTcpConnector underlay = new(unreachableHost: "192.0.2.1", server.Port);
+            MasqueTunnel tunnel = await MasqueTunnel.OpenAsync(registration, underlay, ["192.0.2.2"], cancellation.Token).ConfigureAwait(continueOnCapturedContext: true);
+
+            await tunnel.DisposeAsync().ConfigureAwait(continueOnCapturedContext: true);
+
+            Assert.Equal(["192.0.2.1", "192.0.2.2"], underlay.Hosts);
+        }
+        finally
+        {
+            await server.DisposeAsync().ConfigureAwait(continueOnCapturedContext: true);
+        }
     }
 
     /// <summary>
@@ -94,7 +136,7 @@ public sealed class MasqueTunnelTests
         IOException exception = await Assert.ThrowsAsync<IOException>(
             async () =>
             {
-                MasqueTunnel tunnel = await MasqueTunnel.OpenAsync(registration, underlay, cancellation.Token).ConfigureAwait(continueOnCapturedContext: true);
+                MasqueTunnel tunnel = await MasqueTunnel.OpenAsync(registration, underlay, [], cancellation.Token).ConfigureAwait(continueOnCapturedContext: true);
 
                 await tunnel.DisposeAsync().ConfigureAwait(continueOnCapturedContext: true);
             }
@@ -108,6 +150,28 @@ public sealed class MasqueTunnelTests
 
         await cancellation.CancelAsync().ConfigureAwait(continueOnCapturedContext: true);
         await closing.ConfigureAwait(continueOnCapturedContext: true);
+    }
+
+    /// <summary>
+    /// Registered endpoints come first, and a fallback that repeats one of them or is blank is not tried twice.
+    /// </summary>
+    [Fact]
+    public void RegisteredEndpointsPrecedeFallbacksWithoutDuplicates()
+    {
+        DeviceRegistration registration = new(
+            DeviceId: "loopback",
+            AccessToken: "unused",
+            string.Empty,
+            string.Empty,
+            EndpointIpv4: "162.159.198.2",
+            EndpointIpv6: "2606:4700:103::2",
+            AddressIpv4: "172.16.0.2",
+            AddressIpv6: null
+        );
+
+        string[] endpoints = registration.GetMasqueEndpoints(["162.159.198.3", "162.159.198.2", " "]);
+
+        Assert.Equal(["162.159.198.2", "2606:4700:103::2", "162.159.198.3"], endpoints);
     }
 
     // Accepts connections and closes them at once, like a middlebox with nowhere to send them.
@@ -128,6 +192,23 @@ public sealed class MasqueTunnelTests
         catch (OperationCanceledException exception)
         {
             Assert.True(cancellationToken.IsCancellationRequested, exception.Message);
+        }
+    }
+
+    // Refuses one host the way a proxy answers 502 for an unroutable address, and sends every other connection to loopback.
+    private sealed class UnreachableFirstTcpConnector(string unreachableHost, int port) : ITcpConnector
+    {
+        private readonly ConcurrentQueue<string> _hosts = new();
+
+        public IReadOnlyList<string> Hosts => [.. _hosts];
+
+        public ValueTask<Stream> ConnectAsync(DnsEndPoint remoteEndPoint, CancellationToken cancellationToken)
+        {
+            _hosts.Enqueue(remoteEndPoint.Host);
+
+            return remoteEndPoint.Host == unreachableHost
+                ? throw new IOException($"The proxy refused to connect to {remoteEndPoint.Host}:{remoteEndPoint.Port}: HTTP/1.1 502 Bad Gateway")
+                : new RedirectingTcpConnector(port).ConnectAsync(remoteEndPoint, cancellationToken);
         }
     }
 }

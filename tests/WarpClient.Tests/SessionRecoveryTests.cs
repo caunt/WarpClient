@@ -90,7 +90,7 @@ public sealed class SessionRecoveryTests
         try
         {
             DeviceRegistration registration = CreateRegistration(deviceKey, serverKey);
-            MasqueTunnel tunnel = await MasqueTunnel.OpenAsync(registration, new RedirectingTcpConnector(server.Port), cancellation.Token).ConfigureAwait(continueOnCapturedContext: true);
+            MasqueTunnel tunnel = await MasqueTunnel.OpenAsync(registration, new RedirectingTcpConnector(server.Port), [], cancellation.Token).ConfigureAwait(continueOnCapturedContext: true);
 
             await tunnel.DisposeAsync().ConfigureAwait(continueOnCapturedContext: true);
             await tunnel.DisposeAsync().ConfigureAwait(continueOnCapturedContext: true);

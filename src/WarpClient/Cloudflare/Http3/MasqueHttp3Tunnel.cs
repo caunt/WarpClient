@@ -48,7 +48,12 @@ internal sealed class MasqueHttp3Tunnel : IPacketTunnel
 
     public bool IsClosed => _closed || _connection.IsClosed;
 
-    public static async ValueTask<MasqueHttp3Tunnel> OpenAsync(DeviceRegistration registration, IUdpConnector underlay, CancellationToken cancellationToken)
+    public static async ValueTask<MasqueHttp3Tunnel> OpenAsync(
+        DeviceRegistration registration,
+        IUdpConnector underlay,
+        IEnumerable<string> fallbackEndpoints,
+        CancellationToken cancellationToken
+    )
     {
         // Cloudflare requires datagram support in SETTINGS, and its own client also sends the setting's draft code point.
         QuicWriter settings = new();
@@ -60,7 +65,7 @@ internal sealed class MasqueHttp3Tunnel : IPacketTunnel
 
         string serverName = registration.IsZeroTrust ? ZeroTrustServerName : ServerName;
 
-        MasqueHttp3Connection connection = await MasqueHttp3Connection.OpenAsync(registration, underlay, serverName, settings.ToArray(), datagrams: true, cancellationToken)
+        MasqueHttp3Connection connection = await MasqueHttp3Connection.OpenAsync(registration, underlay, fallbackEndpoints, serverName, settings.ToArray(), datagrams: true, cancellationToken)
             .ConfigureAwait(continueOnCapturedContext: false);
 
         try

@@ -83,6 +83,7 @@ WarpClientOptions options = new()
 - `RegistrationPath` holds the device's private keys and access token. It defaults to `WarpClient/registration.json` in the user's application data folder and is created readable only by its owner.
 - `Underlay` carries the registration API calls and the HTTP/2 tunnel's TCP connection. It defaults to `SystemProxyTcpConnector`, which connects directly unless the system proxy settings say otherwise.
 - `UdpUnderlay` carries WireGuard and QUIC datagrams.
+- `FallbackEndpoints` lists extra MASQUE addresses (port 443) that the MASQUE transports try after the registered ones, for networks where the registered address is unreachable. They must serve the same tunnel key, so an address that fails the key check is skipped. It is empty by default and ignored by WireGuard.
 
 ## How It Works
 

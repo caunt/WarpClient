@@ -82,10 +82,15 @@ internal sealed class MasqueTunnel : IPacketTunnel
 
     public bool IsClosed => _closed;
 
-    public static async ValueTask<MasqueTunnel> OpenAsync(DeviceRegistration registration, ITcpConnector underlay, CancellationToken cancellationToken)
+    public static async ValueTask<MasqueTunnel> OpenAsync(
+        DeviceRegistration registration,
+        ITcpConnector underlay,
+        IEnumerable<string> fallbackEndpoints,
+        CancellationToken cancellationToken
+    )
     {
         byte[] pinnedKey = ReadServerKey(registration.ServerPublicKey);
-        string[] endpoints = [.. new[] { registration.EndpointIpv4, registration.EndpointIpv6 }.OfType<string>()];
+        string[] endpoints = registration.GetMasqueEndpoints(fallbackEndpoints);
 
         List<Exception> failures = [];
 

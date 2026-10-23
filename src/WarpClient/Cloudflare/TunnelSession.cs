@@ -32,8 +32,8 @@ internal sealed class TunnelSession : IWarpSession
         IPacketTunnel tunnel = options.Transport switch
         {
             WarpTransport.WireGuard => await WireGuardTunnel.OpenAsync(registration, options.UdpUnderlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false),
-            WarpTransport.MasqueHttp3 => await MasqueHttp3Tunnel.OpenAsync(registration, options.UdpUnderlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false),
-            _ => await MasqueTunnel.OpenAsync(registration, options.Underlay, cancellationToken).ConfigureAwait(continueOnCapturedContext: false),
+            WarpTransport.MasqueHttp3 => await MasqueHttp3Tunnel.OpenAsync(registration, options.UdpUnderlay, options.FallbackEndpoints, cancellationToken).ConfigureAwait(continueOnCapturedContext: false),
+            _ => await MasqueTunnel.OpenAsync(registration, options.Underlay, options.FallbackEndpoints, cancellationToken).ConfigureAwait(continueOnCapturedContext: false),
         };
 
         IPAddress? localIpv6 = registration.AddressIpv6 is null ? null : IPAddress.Parse(registration.AddressIpv6);

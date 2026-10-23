@@ -71,11 +71,16 @@ internal sealed class Http3ProxySession : IWarpSession
         }
     }
 
-    public static async ValueTask<Http3ProxySession> OpenAsync(DeviceRegistration registration, IUdpConnector underlay, CancellationToken cancellationToken)
+    public static async ValueTask<Http3ProxySession> OpenAsync(
+        DeviceRegistration registration,
+        IUdpConnector underlay,
+        IEnumerable<string> fallbackEndpoints,
+        CancellationToken cancellationToken
+    )
     {
         string serverName = registration.IsZeroTrust ? ZeroTrustServerName : ServerName;
 
-        MasqueHttp3Connection connection = await MasqueHttp3Connection.OpenAsync(registration, underlay, serverName, [], datagrams: false, cancellationToken)
+        MasqueHttp3Connection connection = await MasqueHttp3Connection.OpenAsync(registration, underlay, fallbackEndpoints, serverName, [], datagrams: false, cancellationToken)
             .ConfigureAwait(continueOnCapturedContext: false);
 
         return new Http3ProxySession(connection);
