@@ -38,6 +38,7 @@ internal sealed class WireGuardTunnel : IPacketTunnel
     private readonly TaskCompletionSource _established = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private volatile bool _closed;
     private WireGuardSession? _current;
+    private int _disposed;
     private long _handshakeStartedAt;
     private SocketException? _lastNetworkError;
     private long _lastSentAt;
@@ -87,6 +88,9 @@ internal sealed class WireGuardTunnel : IPacketTunnel
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, value: 1) != 0)
+            return;
+
         _closed = true;
         await _stopping.CancelAsync().ConfigureAwait(continueOnCapturedContext: false);
         await _connection.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);

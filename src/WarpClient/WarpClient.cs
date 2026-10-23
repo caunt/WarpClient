@@ -139,10 +139,12 @@ public sealed class WarpClient(WarpClientOptions? options = null) : ITcpConnecto
         {
             _disposed = true;
 
-            if (_session is not null)
-                await _session.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
+            IWarpSession? closed = _session;
 
             _session = null;
+
+            if (closed is not null)
+                await closed.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
         }
     }
 
@@ -200,8 +202,14 @@ public sealed class WarpClient(WarpClientOptions? options = null) : ITcpConnecto
                 return _session;
 
             // Cloudflare drops idle tunnels after a few minutes, so a closed session is replaced instead of reported.
-            if (_session is not null)
-                await _session.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
+            // The closed session is dropped before it is disposed and before the replacement opens, so a failed reopen
+            // cannot leave a disposed session behind to be disposed again.
+            IWarpSession? closed = _session;
+
+            _session = null;
+
+            if (closed is not null)
+                await closed.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
 
             _session = await WarpSessionFactory.OpenAsync(_options, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 

@@ -28,6 +28,7 @@ internal sealed class MasqueHttp3Tunnel : IPacketTunnel
     private readonly ManagedQuicStream _request;
     private readonly CancellationTokenSource _stopping = new();
     private volatile bool _closed;
+    private int _disposed;
     private Task _receiving = Task.CompletedTask;
     private Task _watching = Task.CompletedTask;
 
@@ -81,6 +82,9 @@ internal sealed class MasqueHttp3Tunnel : IPacketTunnel
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, value: 1) != 0)
+            return;
+
         _closed = true;
         await _stopping.CancelAsync().ConfigureAwait(continueOnCapturedContext: false);
         await _request.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);

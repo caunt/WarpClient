@@ -67,6 +67,7 @@ internal sealed class MasqueTunnel : IPacketTunnel
     private readonly byte[] _frameBuffer = new byte[MaximumFrameSize];
     private volatile bool _closed;
     private long _connectionSendWindow = DefaultWindowSize;
+    private int _disposed;
     private long _streamSendWindow = DefaultWindowSize;
     private int _peerInitialWindowSize = DefaultWindowSize;
     private Task _receiving = Task.CompletedTask;
@@ -157,6 +158,9 @@ internal sealed class MasqueTunnel : IPacketTunnel
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, value: 1) != 0)
+            return;
+
         _closed = true;
         await _stopping.CancelAsync().ConfigureAwait(continueOnCapturedContext: false);
         await _transport.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
