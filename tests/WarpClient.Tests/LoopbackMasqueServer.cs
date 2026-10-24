@@ -34,7 +34,10 @@ internal sealed class LoopbackMasqueServer : IAsyncDisposable
     {
         CertificateRequest request = new(subjectName: "CN=loopback", serverKey, HashAlgorithmName.SHA256);
 
-        _certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(days: -1), DateTimeOffset.UtcNow.AddDays(days: 1));
+        using X509Certificate2 ephemeral = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(days: -1), DateTimeOffset.UtcNow.AddDays(days: 1));
+
+        // Windows cannot authenticate a server with the ephemeral key of a fresh certificate; reloading it from PKCS#12 makes it usable.
+        _certificate = X509CertificateLoader.LoadPkcs12(ephemeral.Export(X509ContentType.Pfx), password: null);
         _listener.Start();
         _accepting = AcceptAsync(_stopping.Token);
     }
