@@ -37,6 +37,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="NetAgents.Analyzers" Version="26.10.26.2518" PrivateAssets="all" />
+    <PackageReference Include="NetAgents.Analyzers" Version="26.10.30.6264" PrivateAssets="all" />
   </ItemGroup>
 </Project>
