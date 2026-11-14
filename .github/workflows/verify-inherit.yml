@@ -1,0 +1,7 @@
+on:
+  pull_request:
+
+jobs:
+  inherit:
+    uses: void-community/actions/.github/workflows/verify-inherit.yml@verify-inherit
+    secrets: inherit
